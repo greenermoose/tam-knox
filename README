@@ -45,6 +45,8 @@ KEYS
   Alt+B                Toggle left sidebar visibility
   Alt+S                Sync focused repository with remote (fetch, pull
                        --ff-only, push; confirms before main or test)
+  Alt+A, F             Batch fetch all repositories with remotes (git fetch
+                       --prune; non-destructive)
   Alt+C                Open commit message prompt for staged files
   c, Alt+K             Open Branch checkout & creation modal
   z, Alt+Z             Open Stash list management modal
@@ -55,7 +57,8 @@ KEYS
   Alt+, / Alt+.        Switch to previous or next workbench tab
   R, Alt+R             Toggle Rendered vs. Raw syntax-colored file view
   B, Alt+F             Cycle branch filter in Git Graph (All / HEAD)
-  Ctrl+F, /            Find in active repo list, commit graph, or file
+  Ctrl+F, /            Find in repo list, filter Explorer tree (live; Esc
+                       clears), search commit graph, or find in file
   n, N                 Next or previous search match
   Ctrl+U               Update / refresh repositories, graph, and views
   Ctrl+N               Open a new workbench tab

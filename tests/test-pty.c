@@ -62,6 +62,11 @@ int main(int argc, char **argv)
     const char *md_dirty = "# Demo Repo\n\nWelcome to **tam-knox** v0.1.0.\n";
     assert(tam_fs_write_atomic(md_file, md_dirty, strlen(md_dirty), 0644));
 
+    /* Write a temporary keymap.ini to verify user keybinding overrides via TAM_KNOX_KEYMAP */
+    char *km_file = tam_path_join(ws_dir, "keymap.ini");
+    const char *km_ini = "[keymap]\nF5 = guidance\nF6 = fetch-all\n";
+    assert(tam_fs_write_atomic(km_file, km_ini, strlen(km_ini), 0644));
+
     int mfd = posix_openpt(O_RDWR | O_NOCTTY);
     assert(mfd >= 0);
     assert(grantpt(mfd) == 0);
@@ -86,6 +91,7 @@ int main(int argc, char **argv)
         if (sfd > 2)
             close(sfd);
         setenv("TERM", "xterm-256color", 1);
+        setenv("TAM_KNOX_KEYMAP", km_file, 1);
         execl(bin, bin, ws_dir, (char *)NULL);
         _exit(127);
     }
@@ -126,17 +132,27 @@ int main(int argc, char **argv)
     assert(write(mfd, "\033", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 150);
 
-    /* 2. Switch sidebar to Explorer (Alt+2), move down to README.md, press Enter to open file viewer */
+    /* 2. Switch sidebar to Explorer (Alt+2), filter with '/', then clear with Esc */
     assert(write(mfd, "\0332", 2) == 2);
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "EXPLORER") != NULL);
+
+    assert(write(mfd, "/readme\r", 8) == 8);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "filter: \"readme\"") != NULL);
+    assert(strstr(out, "README.md") != NULL);
+
+    assert(write(mfd, "\033", 1) == 1); /* Esc clears Explorer filter */
+    drain_pty(mfd, out, sizeof(out), 150);
+    assert(strstr(out, "Cleared Explorer filter") != NULL);
 
     /* Expand demo-repo and open README.md */
     assert(write(mfd, "j\rj\r", 4) == 4);
     drain_pty(mfd, out, sizeof(out), 250);
     assert(strstr(out, "Demo Repo") != NULL);
 
-    /* 3. Toggle Raw Syntax mode ('R'), split vertically (Alt+V), open guidance (Ctrl+G), close, quit (Ctrl+Q) */
+    /* 3. Toggle Raw Syntax mode ('R'), split vertically (Alt+V), test batch fetch (Alt+A),
+     *    and test custom keymap.ini binding (F5 -> guidance), close, quit (Ctrl+Q) */
     assert(write(mfd, "R", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Raw Syntax") != NULL);
@@ -145,9 +161,14 @@ int main(int argc, char **argv)
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Split pane vertically") != NULL);
 
-    assert(write(mfd, "g", 1) == 1); /* g toggles keybinding guidance */
+    assert(write(mfd, "\033a", 2) == 2); /* Alt+A runs multi-repo batch fetch */
+    drain_pty(mfd, out, sizeof(out), 250);
+    assert(strstr(out, "Fetched 0/1") != NULL);
+
+    assert(write(mfd, "\033[15~", 5) == 5); /* F5 bound to guidance via keymap.ini */
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Keybinding Guidance") != NULL);
+    assert(strstr(out, "F6*") != NULL);
 
     assert(write(mfd, "g\x11", 2) == 2); /* g closes guidance, then Ctrl+Q quits */
     drain_pty(mfd, out, sizeof(out), 200);
@@ -157,6 +178,7 @@ int main(int argc, char **argv)
     close(mfd);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
+    free(km_file);
     free(md_file);
     free(repo1);
     tam_fs_remove_tree(-100, ws_dir);

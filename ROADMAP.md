@@ -11,4 +11,4 @@ viewer, written in C11 on top of `libtam`.
 | **0.1.1** | [P1](plans/P1-initial-workbench.md) | High-contrast 256-color selection, header, top-bar, and muted-text palette for `tam-last`, plus dynamic repository name column sizing in the sidebar | Done (2026-11-25) |
 | **0.1.2** | [P1](plans/P1-initial-workbench.md) | Add `g` single-key shortcut to toggle the keybinding guidance overlay alongside `Ctrl+G` | Done (2026-11-25) |
 | **0.2.0** | [P2](plans/P2-branch-stash-and-split-diff.md) | Branch checkout / creation modal, stash management, and side-by-side diff split mode | Done (2026-11-25) |
-| **0.3.0** | P3 | File tree filtering, multi-repo batch fetch, and user `keymap.ini` customization | Planned |
+| **0.3.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | File tree substring filtering, multi-repo batch fetch (`Alt+A` / `F`), and user `keymap.ini` customization via `libtam` `tam_ini` | Done (2026-11-25) |

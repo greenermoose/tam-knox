@@ -611,6 +611,107 @@ int knox_repo_sync(knox_repo_t *repo, bool allow_protected_push,
     return 0;
 }
 
+#define GIT_BATCH_FETCH_TIMEOUT_MS 30000
+
+int knox_repo_fetch(knox_repo_t *repo, char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path)
+        return -1;
+
+    const char *rem_argv[] = { "git", "-C", repo->root_path, "remote", NULL };
+    tam_exec_result_t rem_res = tam_exec(rem_argv, GIT_DEFAULT_TIMEOUT_MS);
+    bool has_remote = (rem_res.exit_code == 0 && rem_res.stdout_buf &&
+                       rem_res.stdout_buf[0] != '\0');
+    tam_exec_result_free(&rem_res);
+    if (!has_remote) {
+        if (out_summary && sumcap > 0)
+            snprintf(out_summary, sumcap, "%s: no remote configured", repo->name);
+        return 1; /* Skipped */
+    }
+
+    const char *fetch_argv[] = {
+        "git", "-C", repo->root_path, "fetch", "--prune", NULL
+    };
+    tam_exec_result_t fetch_res = tam_exec(fetch_argv, GIT_BATCH_FETCH_TIMEOUT_MS);
+    if (fetch_res.exit_code != 0) {
+        if (out_summary && sumcap > 0) {
+            snprintf(out_summary, sumcap, "%s: fetch failed: %s",
+                     repo->name,
+                     (fetch_res.stderr_buf && *fetch_res.stderr_buf)
+                     ? fetch_res.stderr_buf : "error");
+            char *nl = strchr(out_summary, '\n');
+            if (nl) *nl = '\0';
+        }
+        tam_exec_result_free(&fetch_res);
+        return -1;
+    }
+    tam_exec_result_free(&fetch_res);
+    knox_repo_refresh_status(repo);
+
+    if (out_summary && sumcap > 0) {
+        if (repo->ahead > 0 || repo->behind > 0) {
+            snprintf(out_summary, sumcap, "%s (%s): fetched (+%d/-%d)",
+                     repo->name, repo->branch ? repo->branch : "?",
+                     repo->ahead, repo->behind);
+        } else {
+            snprintf(out_summary, sumcap, "%s (%s): fetched (up to date)",
+                     repo->name, repo->branch ? repo->branch : "?");
+        }
+    }
+    return 0;
+}
+
+int knox_workspace_fetch_all(knox_workspace_t *ws,
+                             knox_fetch_progress_fn progress_cb,
+                             void *user,
+                             knox_batch_fetch_result_t *out_res,
+                             char *out_summary, size_t sumcap)
+{
+    knox_batch_fetch_result_t res = {0};
+    if (!ws) {
+        if (out_res)
+            *out_res = res;
+        return -1;
+    }
+
+    res.total = ws->count;
+    for (size_t i = 0; i < ws->count; i++) {
+        knox_repo_t *repo = &ws->repos[i];
+        if (progress_cb)
+            progress_cb(i, ws->count, repo, user);
+
+        char repo_msg[256] = "";
+        int rc = knox_repo_fetch(repo, repo_msg, sizeof(repo_msg));
+        if (rc == 0) {
+            res.fetched++;
+            if (repo->behind > 0)
+                res.behind_any++;
+        } else if (rc == 1) {
+            res.skipped++;
+        } else {
+            res.failed++;
+        }
+    }
+
+    if (out_res)
+        *out_res = res;
+
+    if (out_summary && sumcap > 0) {
+        if (res.total == 0) {
+            snprintf(out_summary, sumcap, "No repositories in workspace to fetch");
+        } else if (res.behind_any > 0) {
+            snprintf(out_summary, sumcap,
+                     "Fetched %zu/%zu repo(s) (%zu skipped, %zu failed; %zu behind upstream)",
+                     res.fetched, res.total, res.skipped, res.failed, res.behind_any);
+        } else {
+            snprintf(out_summary, sumcap,
+                     "Fetched %zu/%zu repo(s) (%zu skipped, %zu failed; all up to date)",
+                     res.fetched, res.total, res.skipped, res.failed);
+        }
+    }
+    return (res.failed == 0) ? 0 : -1;
+}
+
 char *knox_repo_diff_working_file(const knox_repo_t *repo,
                                   const knox_file_change_t *chg)
 {

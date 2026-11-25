@@ -4,7 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+
+#define KNOX_EXPLORER_FILTER_MAX_DEPTH 5
+#define KNOX_EXPLORER_FILTER_NODE_CAP  4000
 
 static char *xstrdup(const char *s)
 {
@@ -108,23 +112,100 @@ static int tree_node_load_children(knox_tree_node_t *dir_node, bool show_hidden)
     return 0;
 }
 
-static void flatten_tree_rec(knox_explorer_t *ex, knox_tree_node_t *node)
+static bool flat_append(knox_explorer_t *ex, knox_tree_node_t *node)
 {
-    if (!node)
-        return;
     if (ex->flat_count == ex->flat_cap) {
         size_t next = ex->flat_cap ? ex->flat_cap * 2 : 64;
         knox_tree_node_t **grown = realloc(ex->flat, next * sizeof(*grown));
         if (!grown)
-            return;
+            return false;
         ex->flat = grown;
         ex->flat_cap = next;
     }
     ex->flat[ex->flat_count++] = node;
+    return true;
+}
+
+static void flatten_tree_rec(knox_explorer_t *ex, knox_tree_node_t *node)
+{
+    if (!node)
+        return;
+    if (!flat_append(ex, node))
+        return;
     if (node->is_dir && node->expanded) {
         for (size_t i = 0; i < node->child_count; i++)
             flatten_tree_rec(ex, node->children[i]);
     }
+}
+
+static bool should_skip_filter_dir(const char *name)
+{
+    return strcmp(name, "build") == 0 ||
+           strcmp(name, "node_modules") == 0 ||
+           strcmp(name, "worktrees") == 0 ||
+           strcmp(name, ".git") == 0;
+}
+
+static bool node_matches_filter(const char *root_abs,
+                                const knox_tree_node_t *node,
+                                const char *query)
+{
+    if (!node || !query || !*query)
+        return true;
+    if (node->name && strcasestr(node->name, query) != NULL)
+        return true;
+    if (root_abs && node->abs_path) {
+        size_t rlen = strlen(root_abs);
+        if (strncmp(node->abs_path, root_abs, rlen) == 0 &&
+            node->abs_path[rlen] == '/') {
+            const char *rel = node->abs_path + rlen + 1;
+            if (strcasestr(rel, query) != NULL)
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool flatten_filtered_rec(knox_explorer_t *ex, knox_tree_node_t *node,
+                                 const char *query, int depth_left,
+                                 size_t *visited)
+{
+    if (!node)
+        return false;
+
+    if (node != ex->root && node->is_dir && should_skip_filter_dir(node->name))
+        return false;
+
+    (*visited)++;
+    if (node->is_dir && !node->loaded && depth_left > 0 &&
+        *visited < KNOX_EXPLORER_FILTER_NODE_CAP) {
+        tree_node_load_children(node, ex->show_hidden);
+    }
+
+    size_t start_idx = ex->flat_count;
+    if (!flat_append(ex, node))
+        return false;
+
+    bool self_match = (node != ex->root) &&
+                      node_matches_filter(ex->root->abs_path, node, query);
+    bool child_match = false;
+
+    if (node->is_dir && node->loaded && depth_left > 0) {
+        for (size_t i = 0; i < node->child_count; i++) {
+            if (*visited >= KNOX_EXPLORER_FILTER_NODE_CAP)
+                break;
+            if (flatten_filtered_rec(ex, node->children[i], query,
+                                     depth_left - 1, visited)) {
+                child_match = true;
+            }
+        }
+    }
+
+    if (node == ex->root || self_match || child_match)
+        return true;
+
+    ex->flat_count = start_idx;
+    return false;
 }
 
 static void decorate_node_rec(knox_tree_node_t *node,
@@ -225,9 +306,47 @@ int knox_explorer_toggle_node(knox_explorer_t *ex, size_t flat_idx,
         tree_node_load_children(node, ex->show_hidden);
 
     ex->flat_count = 0;
-    flatten_tree_rec(ex, ex->root);
+    if (ex->filter[0] != '\0') {
+        size_t visited = 0;
+        flatten_filtered_rec(ex, ex->root, ex->filter,
+                             KNOX_EXPLORER_FILTER_MAX_DEPTH, &visited);
+    } else {
+        flatten_tree_rec(ex, ex->root);
+    }
     knox_explorer_refresh_git_status(ex, ws);
     return 1;
+}
+
+int knox_explorer_set_filter(knox_explorer_t *ex, const char *query,
+                             const knox_workspace_t *ws)
+{
+    if (!ex || !ex->root)
+        return -1;
+
+    if (!query || !*query) {
+        ex->filter[0] = '\0';
+        ex->flat_count = 0;
+        flatten_tree_rec(ex, ex->root);
+        knox_explorer_refresh_git_status(ex, ws);
+        return 0;
+    }
+
+    snprintf(ex->filter, sizeof(ex->filter), "%s", query);
+    ex->flat_count = 0;
+    size_t visited = 0;
+    flatten_filtered_rec(ex, ex->root, ex->filter,
+                         KNOX_EXPLORER_FILTER_MAX_DEPTH, &visited);
+    knox_explorer_refresh_git_status(ex, ws);
+    return 0;
+}
+
+void knox_explorer_clear_filter(knox_explorer_t *ex)
+{
+    if (!ex || !ex->root)
+        return;
+    ex->filter[0] = '\0';
+    ex->flat_count = 0;
+    flatten_tree_rec(ex, ex->root);
 }
 
 int knox_explorer_rebuild(knox_explorer_t *ex, const knox_workspace_t *ws)
@@ -235,10 +354,15 @@ int knox_explorer_rebuild(knox_explorer_t *ex, const knox_workspace_t *ws)
     if (!ex || !ex->root)
         return -1;
     char *saved_root = xstrdup(ex->root->abs_path);
+    char saved_filter[128];
+    snprintf(saved_filter, sizeof(saved_filter), "%s", ex->filter);
     bool show_hidden = ex->show_hidden;
     knox_explorer_free(ex);
     int rc = knox_explorer_init(ex, saved_root, show_hidden);
     free(saved_root);
-    knox_explorer_refresh_git_status(ex, ws);
+    if (rc == 0 && saved_filter[0] != '\0')
+        knox_explorer_set_filter(ex, saved_filter, ws);
+    else
+        knox_explorer_refresh_git_status(ex, ws);
     return rc;
 }

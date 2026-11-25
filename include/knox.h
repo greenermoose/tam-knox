@@ -17,7 +17,7 @@
 #include <time.h>
 
 #ifndef KNOX_VERSION
-#define KNOX_VERSION "0.2.0"
+#define KNOX_VERSION "0.3.0"
 #endif
 
 /* ========================================================================= */
@@ -103,6 +103,31 @@ int  knox_repo_commit_staged(knox_repo_t *repo, const char *message,
  * ahead > 0, returns 1 (caller should prompt user) without pushing. */
 int  knox_repo_sync(knox_repo_t *repo, bool allow_protected_push,
                     char *out_summary, size_t sumcap);
+
+/* Multi-repo batch fetch (src/git.c): non-destructive git fetch --prune
+ * across all discovered repositories with configured remotes. */
+typedef struct {
+    size_t total;      /* Total repos in workspace */
+    size_t fetched;    /* Repos successfully fetched */
+    size_t skipped;    /* Repos with no remote configured */
+    size_t failed;     /* Repos where git fetch failed */
+    size_t behind_any; /* Repos with behind > 0 after fetch */
+} knox_batch_fetch_result_t;
+
+typedef void (*knox_fetch_progress_fn)(size_t idx, size_t total,
+                                       const knox_repo_t *repo,
+                                       void *user);
+
+/* Fetch a single repo (git fetch --prune). Returns 0 on success,
+ * 1 if no remote is configured (skipped), -1 on failure. */
+int  knox_repo_fetch(knox_repo_t *repo, char *out_summary, size_t sumcap);
+
+/* Fetch all repos in `ws` with configured remotes and refresh status. */
+int  knox_workspace_fetch_all(knox_workspace_t *ws,
+                              knox_fetch_progress_fn progress_cb,
+                              void *user,
+                              knox_batch_fetch_result_t *out_res,
+                              char *out_summary, size_t sumcap);
 
 /* Generate unified diff text (caller frees returned char*). */
 char *knox_repo_diff_working_file(const knox_repo_t *repo,
@@ -321,6 +346,7 @@ typedef struct {
     size_t             flat_count;
     size_t             flat_cap;
     bool               show_hidden;
+    char               filter[128]; /* Case-insensitive substring filter */
 } knox_explorer_t;
 
 int  knox_explorer_init(knox_explorer_t *ex, const char *root_path,
@@ -330,6 +356,9 @@ int  knox_explorer_toggle_node(knox_explorer_t *ex, size_t flat_idx,
                                const knox_workspace_t *ws);
 void knox_explorer_refresh_git_status(knox_explorer_t *ex,
                                       const knox_workspace_t *ws);
+int  knox_explorer_set_filter(knox_explorer_t *ex, const char *query,
+                              const knox_workspace_t *ws);
+void knox_explorer_clear_filter(knox_explorer_t *ex);
 int  knox_explorer_rebuild(knox_explorer_t *ex, const knox_workspace_t *ws);
 
 /* ========================================================================= */
@@ -542,6 +571,43 @@ knox_split_node_t *knox_split_find_pane(knox_split_node_t *node,
                                         knox_pane_t *p);
 size_t             knox_split_count_leaves(const knox_split_node_t *node);
 void               knox_split_free_tree(knox_split_node_t *node);
+
+/* ========================================================================= */
+/* 7. User Keymap Configuration via libtam tam_ini (src/keymap.c)            */
+/* ========================================================================= */
+
+typedef struct {
+    tam_key_type_t type;
+    uint32_t       codepoint;
+    unsigned       mods;
+    char           key_label[32]; /* Formatted physical key name, e.g. "Alt+A" */
+    char           widget[48];    /* Canonical widget name or "unbind" */
+} knox_keybind_t;
+
+typedef struct {
+    knox_keybind_t *entries;
+    size_t          count;
+    size_t          cap;
+    char            source_path[512];
+    size_t          warning_count;
+    char            last_warning[256];
+} knox_keymap_t;
+
+void        knox_keymap_init(knox_keymap_t *km);
+void        knox_keymap_free(knox_keymap_t *km);
+bool        knox_keymap_parse_key(const char *spec, tam_key_type_t *out_type,
+                                  uint32_t *out_cp, unsigned *out_mods);
+void        knox_keymap_format_key(tam_key_type_t type, uint32_t cp,
+                                   unsigned mods, char *out, size_t cap);
+bool        knox_keymap_is_valid_widget(const char *widget);
+int         knox_keymap_load_string(knox_keymap_t *km, const char *ini_text);
+int         knox_keymap_load_file(knox_keymap_t *km, const char *path);
+int         knox_keymap_load_default(knox_keymap_t *km);
+const char *knox_keymap_lookup(const knox_keymap_t *km,
+                               const tam_key_event_t *ev);
+bool        knox_keymap_find_widget_key(const knox_keymap_t *km,
+                                        const char *widget,
+                                        char *out, size_t cap);
 
 /* Top-level Workbench options & entry point */
 typedef struct {

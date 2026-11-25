@@ -19,7 +19,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
 CFLAGS ?= -O2 -g
 override CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wvla
 
-CORE_OBJECTS = $(addprefix $(BUILD)/,git.o graph.o explorer.o syntax.o viewer.o pane.o workbench.o source.o layout.o render.o render_md.o render_html.o render_mermaid.o)
+CORE_OBJECTS = $(addprefix $(BUILD)/,git.o graph.o explorer.o keymap.o syntax.o viewer.o pane.o workbench.o source.o layout.o render.o render_md.o render_html.o render_mermaid.o)
 OBJECTS = $(BUILD)/main.o $(CORE_OBJECTS)
 
 all: $(BUILD)/tam-knox
@@ -45,13 +45,17 @@ $(BUILD)/test-git: tests/test-git.c $(CORE_OBJECTS) $(LIBTAM)
 $(BUILD)/test-syntax-render: tests/test-syntax-render.c $(CORE_OBJECTS) $(LIBTAM)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
+$(BUILD)/test-p3: tests/test-p3.c $(CORE_OBJECTS) $(LIBTAM)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $^
+
 $(BUILD)/test-pty: tests/test-pty.c VERSION | libtam-check
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBTAM)
 
-test: $(BUILD)/tam-knox $(BUILD)/test-graph $(BUILD)/test-git $(BUILD)/test-syntax-render $(BUILD)/test-pty
+test: $(BUILD)/tam-knox $(BUILD)/test-graph $(BUILD)/test-git $(BUILD)/test-syntax-render $(BUILD)/test-p3 $(BUILD)/test-pty
 	$(BUILD)/test-graph
 	$(BUILD)/test-git
 	$(BUILD)/test-syntax-render
+	$(BUILD)/test-p3
 	$(BUILD)/test-pty $(BUILD)/tam-knox
 	sh tests/cli.sh $(BUILD)/tam-knox $(VERSION)
 

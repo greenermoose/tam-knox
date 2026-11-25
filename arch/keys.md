@@ -48,6 +48,7 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `Alt+W` | `Alt+W` | `focus-other-pane` | Cycle focus among split panes inside the active tab |
 | `Alt+,` / `Alt+.` | `Alt+,` / `Alt+.` | `tab-prev` / `tab-next` | Switch to previous / next tab in the main workbench |
 | `Alt+S` | `Alt+S` | `repo-sync` | Sync focused repository with remote (`fetch`, `pull --ff-only`, `push`; confirms on `main`/`test`) |
+| `Alt+A`, `F` | `Alt+A`, `F` | `fetch-all` | Non-destructive batch `git fetch --prune` across all repositories with remotes |
 | `Alt+C` | `Alt+C` | `commit-prompt` | Open commit message prompt to commit staged files in active repository |
 | `c`, `Alt+K` | `c`, `Alt+K` | `branch-modal` | Open interactive Branch checkout & creation modal (`Alt+N` creates a new branch) |
 | `z`, `Alt+Z` | `z`, `Alt+Z` | `stash-modal` | Open interactive Stash management modal (`n` push, `Enter` diff, `a` apply, `p` pop, `d` drop) |
@@ -63,3 +64,27 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `/`, `n`, `N` | `/`, `n`, `N` | `find`, `find-next`, `find-prev` | Search and step through matches |
 | `g` | `g` | `guidance` | Toggle keybinding guidance overlay (alias for `Ctrl+G`) |
 | `q` | `q` | `quit` | Quit `tam-knox` (when not typing in a prompt) |
+
+## User `keymap.ini` Customization
+
+Users can override or unbind any key by creating
+`~/.config/tamlinux/tam-knox/keymap.ini` (respecting `$XDG_CONFIG_HOME`,
+with fallback to `~/.config/tam-knox/keymap.ini` and optional
+`TAM_KNOX_KEYMAP` environment variable override):
+
+```ini
+[keymap]
+F5 = update
+Alt+A = fetch-all
+q = unbind
+```
+
+- Uses physical key names (`Ctrl+`, `Alt+`, `Shift+`, `F1`–`F12`, named
+  navigation keys, and printable ASCII characters). `Meta+` chords are
+  rejected because `Meta` belongs exclusively to `tam-pane`.
+- Values must be canonical widget names from the tables above (plus
+  `move-up`, `move-down`, `page-up`, `page-down`, `jump-top`,
+  `jump-bottom`, `scroll-left`, `scroll-right`, `cancel-mode`, or
+  `unbind`/`none`).
+- Active overrides are shown with a `*` suffix in the Guidance overlay
+  (`g` / `Ctrl+G`) and Command Palette (`Ctrl+E`).

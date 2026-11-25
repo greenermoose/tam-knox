@@ -58,6 +58,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "open-or-inspect",     "Enter",         "Select repo, expand folder, open file, or inspect commit" },
     { "stage-or-page-down",  "Space",         "Stage/unstage file in Changes, or page down in viewer" },
     { "repo-sync",           "Alt+S",         "Sync active repository with remote (fetch, pull --ff-only, push)" },
+    { "fetch-all",           "Alt+A / F",     "Fetch all repositories with remotes (git fetch --prune)" },
     { "commit-prompt",       "Alt+C / Ctrl+S","Commit staged changes in active repository" },
     { "branch-modal",        "Alt+K / c",     "Checkout or create a branch in active repository" },
     { "stash-modal",         "Alt+Z / z",     "Manage stashes (list, push, inspect diff, apply, pop, drop)" },
@@ -72,7 +73,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "tab-next",            "Alt+.",         "Switch to next workbench tab" },
     { "new",                 "Ctrl+N",        "Open a new workbench tab" },
     { "close",               "Ctrl+D",        "Close active split pane or workbench tab" },
-    { "find",                "Ctrl+F / /",    "Find in active repository list, commit graph, or file" },
+    { "find",                "Ctrl+F / /",    "Find in repo list, Explorer tree, commit graph, or file" },
     { "find-next",           "n",             "Jump to next search match" },
     { "find-prev",           "N",             "Jump to previous search match" },
     { "update",              "Ctrl+U",        "Refresh repository statuses, commit graph, and explorer" },
@@ -89,6 +90,7 @@ typedef struct {
     knox_options_t      opts;
     tam_tty_t           tty;
     tam_key_parser_t    keys;
+    knox_keymap_t       keymap;
     knox_workspace_t    ws;
     knox_explorer_t     explorer;
     /* Per-repo cached graph and active commit details */
@@ -672,7 +674,7 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
         /* 1. Repositories Header */
         bool focus_repos = (app->focus == FOCUS_SIDEBAR_REPOS);
         char hdr[256];
-        snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [Alt+S Sync]",
+        snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [Alt+S Sync, Alt+A Fetch]",
                  bx->arrow_d, app->ws.count);
         const char *hdr_sgr = focus_repos
                               ? sgr_header_focused(app)
@@ -803,8 +805,16 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
         /* SIDEBAR_EXPLORER */
         bool focus_exp = (app->focus == FOCUS_SIDEBAR_EXPLORER);
         char hdr[256];
-        snprintf(hdr, sizeof(hdr), " %s EXPLORER (%zu items)",
-                 bx->arrow_d, app->explorer.flat_count);
+        if (app->explorer.filter[0] != '\0') {
+            size_t matches = app->explorer.flat_count > 0
+                             ? app->explorer.flat_count - 1 : 0;
+            snprintf(hdr, sizeof(hdr),
+                     " %s EXPLORER [filter: \"%s\"] (%zu) [Esc Clear]",
+                     bx->arrow_d, app->explorer.filter, matches);
+        } else {
+            snprintf(hdr, sizeof(hdr), " %s EXPLORER (%zu items) [/ Filter]",
+                     bx->arrow_d, app->explorer.flat_count);
+        }
         const char *hdr_sgr = focus_exp
                               ? sgr_header_focused(app)
                               : sgr_header_unfocused(app);
@@ -1504,6 +1514,8 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
         app->modal == MODAL_STASH_PUSH ||
         app->modal == MODAL_CONFIRM_STASH_DROP) {
         const char *prefix =
+            (app->modal == MODAL_SEARCH && app->focus == FOCUS_SIDEBAR_EXPLORER)
+                                                ? "Filter Explorer (Esc clears): " :
             (app->modal == MODAL_SEARCH)        ? "Find: " :
             (app->modal == MODAL_COMMIT)        ? "Commit message (staged files): " :
             (app->modal == MODAL_BRANCH_CREATE) ? "Create & checkout new branch name: " :
@@ -1546,8 +1558,16 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
             size_t idx = (size_t)(r - 1);
             char line[256] = "";
             if (idx < WIDGET_COUNT) {
+                char key_disp[40];
+                char custom_key[32];
+                if (knox_keymap_find_widget_key(&app->keymap, WIDGET_TABLE[idx].name,
+                                                custom_key, sizeof(custom_key))) {
+                    snprintf(key_disp, sizeof(key_disp), "%s*", custom_key);
+                } else {
+                    snprintf(key_disp, sizeof(key_disp), "%s", WIDGET_TABLE[idx].keys);
+                }
                 snprintf(line, sizeof(line), "  %-16s %-22s %s",
-                         WIDGET_TABLE[idx].keys,
+                         key_disp,
                          WIDGET_TABLE[idx].name,
                          WIDGET_TABLE[idx].desc);
             }
@@ -1584,9 +1604,17 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
             const char *row_sgr = bg;
             if (m < match_count) {
                 size_t wi = match_indices[m];
+                char key_disp[40];
+                char custom_key[32];
+                if (knox_keymap_find_widget_key(&app->keymap, WIDGET_TABLE[wi].name,
+                                                custom_key, sizeof(custom_key))) {
+                    snprintf(key_disp, sizeof(key_disp), "%s*", custom_key);
+                } else {
+                    snprintf(key_disp, sizeof(key_disp), "%s", WIDGET_TABLE[wi].keys);
+                }
                 snprintf(line, sizeof(line), "  %-22s %-16s %s",
                          WIDGET_TABLE[wi].name,
-                         WIDGET_TABLE[wi].keys,
+                         key_disp,
                          WIDGET_TABLE[wi].desc);
                 if (m == app->palette_cursor)
                     row_sgr = sgr_row_selected(app, true);
@@ -1706,11 +1734,11 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
 
     const char *hints =
         (app->focus == FOCUS_SIDEBAR_REPOS)
-        ? "[Enter] Graph  [c/Alt+K] Branches  [z/Alt+Z] Stash  [Alt+S] Sync  [g] Keys"
+        ? "[Enter] Graph  [c/Alt+K] Branches  [z/Alt+Z] Stash  [Alt+S] Sync  [Alt+A] Fetch All  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_CHANGES)
         ? "[Space] Stage  [Enter] Diff  [Alt+C] Commit  [z/Alt+Z] Stash  [Alt+E] Edit  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_EXPLORER)
-        ? "[Enter] Open/Expand  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [g] Keys"
+        ? "[Enter] Open/Expand  [/] Filter  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [g] Keys"
         : "[Enter] Inspect  [d/R] Diff/Render  [c/Alt+K] Branches  [Alt+V/H] Split  [g] Keys";
 
     char left_label[512];
@@ -1888,6 +1916,16 @@ static void app_move_selection(knox_app_t *app, int delta)
             ap->doc.cursor_line = (size_t)next;
         }
     }
+}
+
+static void fetch_all_progress_cb(size_t idx, size_t total,
+                                  const knox_repo_t *repo, void *user)
+{
+    knox_app_t *app = (knox_app_t *)user;
+    if (!app || !repo)
+        return;
+    app_set_status(app, "Fetching [%zu/%zu] %s...", idx + 1, total, repo->name);
+    app_draw(app);
 }
 
 static void app_execute_widget(knox_app_t *app, const char *widget)
@@ -2118,6 +2156,15 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
             app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
             knox_explorer_refresh_git_status(&app->explorer, &app->ws);
         }
+    } else if (strcmp(widget, "fetch-all") == 0) {
+        knox_batch_fetch_result_t bres = {0};
+        char summary[256] = "";
+        knox_workspace_fetch_all(&app->ws, fetch_all_progress_cb, app,
+                                 &bres, summary, sizeof(summary));
+        if (app->active_repo_idx < app->ws.count)
+            app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
+        knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+        app_set_status(app, "%s", summary);
     } else if (strcmp(widget, "commit-prompt") == 0) {
         if (app->active_repo_idx >= app->ws.count)
             return;
@@ -2132,8 +2179,49 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         app->prompt_len = 0;
     } else if (strcmp(widget, "find") == 0) {
         app->modal = MODAL_SEARCH;
-        app->prompt_buf[0] = '\0';
-        app->prompt_len = 0;
+        if (app->focus == FOCUS_SIDEBAR_EXPLORER && app->explorer.filter[0] != '\0') {
+            snprintf(app->prompt_buf, sizeof(app->prompt_buf), "%s",
+                     app->explorer.filter);
+            app->prompt_len = strlen(app->prompt_buf);
+        } else {
+            app->prompt_buf[0] = '\0';
+            app->prompt_len = 0;
+        }
+    } else if (strcmp(widget, "move-up") == 0) {
+        app_move_selection(app, -1);
+    } else if (strcmp(widget, "move-down") == 0) {
+        app_move_selection(app, 1);
+    } else if (strcmp(widget, "page-up") == 0) {
+        app_move_selection(app, -12);
+    } else if (strcmp(widget, "page-down") == 0) {
+        app_move_selection(app, 12);
+    } else if (strcmp(widget, "jump-top") == 0) {
+        app_move_selection(app, -100000);
+    } else if (strcmp(widget, "jump-bottom") == 0) {
+        app_move_selection(app, 100000);
+    } else if (strcmp(widget, "scroll-left") == 0) {
+        if (app->focus == FOCUS_MAIN_PANE) {
+            knox_pane_t *ap = app_active_pane(app);
+            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+                ap->doc.left_col = (ap->doc.left_col >= 4) ? ap->doc.left_col - 4 : 0;
+        }
+    } else if (strcmp(widget, "scroll-right") == 0) {
+        if (app->focus == FOCUS_MAIN_PANE) {
+            knox_pane_t *ap = app_active_pane(app);
+            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+                ap->doc.left_col += 4;
+        }
+    } else if (strcmp(widget, "clear-screen") == 0) {
+        /* Redraws cleanly at end of event loop */
+    } else if (strcmp(widget, "cancel-mode") == 0) {
+        if (app->focus == FOCUS_SIDEBAR_EXPLORER && app->explorer.filter[0] != '\0') {
+            knox_explorer_clear_filter(&app->explorer);
+            app->explorer_cursor = 0;
+            app->explorer_top = 0;
+            app_set_status(app, "Cleared Explorer filter");
+        } else {
+            app->status_msg[0] = '\0';
+        }
     } else if (strcmp(widget, "find-next") == 0 ||
                strcmp(widget, "find-prev") == 0) {
         bool fwd = (strcmp(widget, "find-next") == 0);
@@ -2252,6 +2340,12 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
     if (ev->type == TAM_KEY_ESC ||
         (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL) &&
          (ev->codepoint == '\\' || ev->codepoint == 'g' || ev->codepoint == 'G'))) {
+        if (app->modal == MODAL_SEARCH && app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            knox_explorer_clear_filter(&app->explorer);
+            app->explorer_cursor = 0;
+            app->explorer_top = 0;
+            app_set_status(app, "Cleared Explorer filter");
+        }
         app->modal = MODAL_NONE;
         return;
     }
@@ -2502,12 +2596,22 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
         }
         if (app->prompt_len > 0)
             app->prompt_buf[--app->prompt_len] = '\0';
+        if (app->modal == MODAL_SEARCH && app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            knox_explorer_set_filter(&app->explorer, app->prompt_buf, &app->ws);
+            app->explorer_cursor = 0;
+            app->explorer_top = 0;
+        }
         return;
     }
     if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL) &&
         (ev->codepoint == 'k' || ev->codepoint == 'K')) {
         app->prompt_len = 0;
         app->prompt_buf[0] = '\0';
+        if (app->modal == MODAL_SEARCH && app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            knox_explorer_set_filter(&app->explorer, "", &app->ws);
+            app->explorer_cursor = 0;
+            app->explorer_top = 0;
+        }
         return;
     }
     if (ev->type == TAM_KEY_ENTER) {
@@ -2548,6 +2652,20 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
             return;
         } else if (app->modal == MODAL_SEARCH) {
             app->modal = MODAL_NONE;
+            if (app->focus == FOCUS_SIDEBAR_EXPLORER) {
+                knox_explorer_set_filter(&app->explorer, app->prompt_buf, &app->ws);
+                app->explorer_cursor = 0;
+                app->explorer_top = 0;
+                if (app->prompt_len == 0) {
+                    app_set_status(app, "Cleared Explorer filter");
+                } else {
+                    size_t matches = app->explorer.flat_count > 0
+                                     ? app->explorer.flat_count - 1 : 0;
+                    app_set_status(app, "Explorer filter '%s': %zu item(s) (Esc to clear)",
+                                   app->prompt_buf, matches);
+                }
+                return;
+            }
             if (app->prompt_len == 0)
                 return;
             knox_pane_t *ap = app_active_pane(app);
@@ -2584,6 +2702,11 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
         if (app->prompt_len + 1 < sizeof(app->prompt_buf)) {
             app->prompt_buf[app->prompt_len++] = (char)ev->codepoint;
             app->prompt_buf[app->prompt_len] = '\0';
+            if (app->modal == MODAL_SEARCH && app->focus == FOCUS_SIDEBAR_EXPLORER) {
+                knox_explorer_set_filter(&app->explorer, app->prompt_buf, &app->ws);
+                app->explorer_cursor = 0;
+                app->explorer_top = 0;
+            }
         }
     }
 }
@@ -2592,6 +2715,16 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
 {
     if (app->modal != MODAL_NONE) {
         handle_modal_key(app, ev);
+        return;
+    }
+
+    /* 0. User keymap.ini overrides (take precedence over built-in defaults) */
+    const char *custom_widget = knox_keymap_lookup(&app->keymap, ev);
+    if (custom_widget) {
+        if (strcmp(custom_widget, "unbind") == 0 ||
+            strcmp(custom_widget, "none") == 0)
+            return;
+        app_execute_widget(app, custom_widget);
         return;
     }
 
@@ -2621,6 +2754,7 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case '2': app_execute_widget(app, "view-explorer"); return;
         case '3': app_execute_widget(app, "view-graph"); return;
         case 'b': app_execute_widget(app, "toggle-sidebar"); return;
+        case 'a': app_execute_widget(app, "fetch-all"); return;
         case 's': app_execute_widget(app, "repo-sync"); return;
         case 'c': app_execute_widget(app, "commit-prompt"); return;
         case 'k': app_execute_widget(app, "branch-modal"); return;
@@ -2685,7 +2819,7 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         app_execute_widget(app, "open-or-inspect");
         return;
     case TAM_KEY_ESC:
-        app->status_msg[0] = '\0';
+        app_execute_widget(app, "cancel-mode");
         return;
     case TAM_KEY_CHAR:
         switch (ev->codepoint) {
@@ -2711,6 +2845,9 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
             return;
         case 'B':
             app_execute_widget(app, "cycle-branch-filter");
+            return;
+        case 'F':
+            app_execute_widget(app, "fetch-all");
             return;
         case 'r':
         case 'R':
@@ -2791,6 +2928,13 @@ int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
         return 1;
     }
 
+    knox_keymap_init(&app.keymap);
+    knox_keymap_load_default(&app.keymap);
+    if (app.keymap.warning_count > 0) {
+        app_set_status(&app, "%s (%zu warning(s))",
+                       app.keymap.last_warning, app.keymap.warning_count);
+    }
+
     knox_workspace_init(&app.ws, workspace_dir);
     knox_discover_repos(&app.ws, 2);
     knox_explorer_init(&app.explorer, app.ws.root_path, false);
@@ -2855,6 +2999,7 @@ int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
     knox_graph_free(&app.graph);
     knox_explorer_free(&app.explorer);
     knox_workspace_free(&app.ws);
+    knox_keymap_free(&app.keymap);
     return 0;
 }
 

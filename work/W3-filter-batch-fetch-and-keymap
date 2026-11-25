@@ -1,0 +1,47 @@
+W3 EXPLORER FILTER, MULTI-REPO BATCH FETCH, AND USER KEYMAP.INI
+
+Date: 2026-11-25
+AI harness: agy 1.5.17
+AI model: gemini-4-neon-medium
+Commits: pending
+
+GUIDANCE
+
+  Fred: "/plan Do the next work slice of tam-knox"
+
+  Fred: "/plan yes, show me the plan in tam-view"
+
+  Fred: "Approved. Proceed."
+
+DONE
+
+  - Planned and reviewed Phase P3 (0.3.0) in tam-view via file-review.
+  - Added live Explorer file tree substring filtering
+    (knox_explorer_set_filter / knox_explorer_clear_filter in
+    src/explorer.c) with bounded auto-descent (depth 5, 4000-node cap,
+    skipping build/node_modules/worktrees/.git), relative-path matching,
+    live Git badge refresh, and Esc restore of original expand state.
+  - Added non-destructive multi-repo batch fetch (knox_repo_fetch /
+    knox_workspace_fetch_all in src/git.c, wired to Alt+A / F and widget
+    fetch-all in src/workbench.c) with live status-bar progress and
+    fetched/skipped/failed/behind-upstream summary.
+  - Added user keymap.ini configuration via libtam tam_ini and
+    tam_xdg_path in src/keymap.c, supporting physical key names,
+    canonical widgets, unbind/none, Meta+ rejection, startup warnings,
+    and custom key display (*) in Guidance and Command Palette.
+  - Added tests/test-p3.c and extended tests/test-pty.c to cover
+    Explorer filtering, batch fetch, and TAM_KNOX_KEYMAP overrides.
+  - Wrote plans/P3-filter-batch-fetch-and-keymap.md, updated ROADMAP.md,
+    README, arch/keys.md, and arch/overview.md.
+  - Verified with make test, make sanitize (ASan + UBSan), and
+    idol-check, and installed tam-knox 0.3.0 to ~/.local/bin.
+
+FAILED
+
+  - Nothing.
+
+HANDOFF
+
+  - tam-knox 0.3.0 (P3) is built, tested, and installed to ~/.local/bin.
+    All planned milestones P1-P3 are complete; ready for Fred's next
+    direction or future milestone planning.
