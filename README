@@ -43,7 +43,7 @@ KEYS
   Alt+2                Switch left sidebar to Explorer tree
   Alt+3                Open or focus the Git Graph tab
   Alt+B                Toggle left sidebar visibility
-  Alt+S                Sync focused repository with remote (fetch, pull
+  s, Alt+S             Sync focused repository with remote (fetch, pull
                        --ff-only, push; confirms before main or test)
   Alt+A, F             Batch fetch all repositories with remotes (git fetch
                        --prune; non-destructive)

@@ -17,6 +17,19 @@ static void run_cmd(const char *const argv[])
     tam_exec_result_free(&r);
 }
 
+static void get_rev_parse(const char *repo_dir, const char *rev,
+                          char *out, size_t cap)
+{
+    const char *argv[] = { "git", "-C", repo_dir, "rev-parse", rev, NULL };
+    tam_exec_result_t r = tam_exec(argv, 10000);
+    assert(r.exit_code == 0 && r.stdout_buf != NULL);
+    snprintf(out, cap, "%s", r.stdout_buf);
+    char *nl = strchr(out, '\n');
+    if (nl)
+        *nl = '\0';
+    tam_exec_result_free(&r);
+}
+
 int main(void)
 {
     char tmp_tpl[] = "/tmp/knox-git-test-XXXXXX";
@@ -84,9 +97,40 @@ int main(void)
     /* 5. Sync repo-alpha (pushes 1 commit to remote), then sync repo-beta (pulls 1 commit) */
     assert(knox_repo_sync(ra, false, sum, sizeof(sum)) == 0);
     assert(ra->ahead == 0);
+    assert(ra->behind == 0);
+    char ra_head[64], ra_up[64], rb_head[64], rb_up[64];
+    get_rev_parse(repo_a, "HEAD", ra_head, sizeof(ra_head));
+    get_rev_parse(repo_a, "@{u}", ra_up, sizeof(ra_up));
+    assert(strcmp(ra_head, ra_up) == 0);
+
     assert(knox_repo_sync(rb, false, sum, sizeof(sum)) == 0);
+    assert(rb->ahead == 0);
     assert(rb->behind == 0);
     assert(strcmp(ra->head_hash, rb->head_hash) == 0);
+    get_rev_parse(repo_b, "HEAD", rb_head, sizeof(rb_head));
+    get_rev_parse(repo_b, "@{u}", rb_up, sizeof(rb_up));
+    assert(strcmp(rb_head, rb_up) == 0);
+    assert(strcmp(ra_head, rb_head) == 0);
+
+    /* 5b. Protected branch push confirmation (main) */
+    run_cmd((const char *[]){"git", "-C", repo_b, "checkout", "-b", "main", NULL});
+    run_cmd((const char *[]){"git", "-C", repo_b, "push", "-u", "origin", "main", NULL});
+    char *main_file = tam_path_join(repo_b, "main.txt");
+    assert(tam_fs_write_atomic(main_file, "main update\n", 12, 0644));
+    run_cmd((const char *[]){"git", "-C", repo_b, "add", "--", "main.txt", NULL});
+    run_cmd((const char *[]){"git", "-C", repo_b, "commit", "-m", "Main commit", NULL});
+    assert(knox_repo_refresh_status(rb) == 0);
+    assert(rb->ahead == 1);
+    assert(knox_repo_sync(rb, false, sum, sizeof(sum)) == 1);
+    assert(strstr(sum, "Confirm push") != NULL);
+    assert(knox_repo_sync(rb, true, sum, sizeof(sum)) == 0);
+    assert(rb->ahead == 0 && rb->behind == 0);
+    get_rev_parse(repo_b, "HEAD", rb_head, sizeof(rb_head));
+    get_rev_parse(repo_b, "@{u}", rb_up, sizeof(rb_up));
+    assert(strcmp(rb_head, rb_up) == 0);
+    run_cmd((const char *[]){"git", "-C", repo_b, "checkout", "dev", NULL});
+    assert(knox_repo_refresh_status(rb) == 0);
+    free(main_file);
 
     /* 6. Verify commit details & diff loader */
     knox_commit_details_t det;

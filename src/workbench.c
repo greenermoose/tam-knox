@@ -57,7 +57,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "focus-prev",          "Shift+Tab",     "Cycle focus backward" },
     { "open-or-inspect",     "Enter",         "Select repo, expand folder, open file, or inspect commit" },
     { "stage-or-page-down",  "Space",         "Stage/unstage file in Changes, or page down in viewer" },
-    { "repo-sync",           "Alt+S",         "Sync active repository with remote (fetch, pull --ff-only, push)" },
+    { "repo-sync",           "s / Alt+S",     "Sync active repository with remote (fetch, pull --ff-only, push)" },
     { "fetch-all",           "Alt+A / F",     "Fetch all repositories with remotes (git fetch --prune)" },
     { "commit-prompt",       "Alt+C / Ctrl+S","Commit staged changes in active repository" },
     { "branch-modal",        "Alt+K / c",     "Checkout or create a branch in active repository" },
@@ -674,7 +674,7 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
         /* 1. Repositories Header */
         bool focus_repos = (app->focus == FOCUS_SIDEBAR_REPOS);
         char hdr[256];
-        snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [Alt+S Sync, Alt+A Fetch]",
+        snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [s Sync, Alt+A Fetch]",
                  bx->arrow_d, app->ws.count);
         const char *hdr_sgr = focus_repos
                               ? sgr_header_focused(app)
@@ -1734,7 +1734,7 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
 
     const char *hints =
         (app->focus == FOCUS_SIDEBAR_REPOS)
-        ? "[Enter] Graph  [c/Alt+K] Branches  [z/Alt+Z] Stash  [Alt+S] Sync  [Alt+A] Fetch All  [g] Keys"
+        ? "[Enter] Graph  [s/Alt+S] Sync  [c/Alt+K] Branches  [z/Alt+Z] Stash  [Alt+A] Fetch All  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_CHANGES)
         ? "[Space] Stage  [Enter] Diff  [Alt+C] Commit  [z/Alt+Z] Stash  [Alt+E] Edit  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_EXPLORER)
@@ -1926,6 +1926,39 @@ static void fetch_all_progress_cb(size_t idx, size_t total,
         return;
     app_set_status(app, "Fetching [%zu/%zu] %s...", idx + 1, total, repo->name);
     app_draw(app);
+}
+
+static void app_run_repo_sync(knox_app_t *app, bool allow_protected_push)
+{
+    if (app->active_repo_idx >= app->ws.count)
+        return;
+    knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+    bool needs_confirm_now = (!allow_protected_push && repo->ahead > 0 &&
+                              knox_branch_needs_push_confirm(repo->branch));
+    if (!needs_confirm_now) {
+        app_set_status(app, "Syncing %s (%s)...",
+                       repo->name, repo->branch ? repo->branch : "?");
+        app_draw(app);
+    }
+
+    char summary[256] = "";
+    int rc = knox_repo_sync(repo, allow_protected_push, summary, sizeof(summary));
+    app_set_status(app, "%s", summary);
+    if (rc == 1) {
+        app->modal = MODAL_CONFIRM_SYNC;
+    } else {
+        bool all_branches = true;
+        bool show_remotes = true;
+        knox_pane_t *ap = app_active_pane(app);
+        if (ap && ap->content == KNOX_PANE_GRAPH &&
+            ap->repo_idx == app->active_repo_idx) {
+            all_branches = ap->graph_all_branches;
+            show_remotes = ap->graph_show_remotes;
+        }
+        app_ensure_repo_graph(app, app->active_repo_idx,
+                              all_branches, show_remotes, true);
+        knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+    }
 }
 
 static void app_execute_widget(knox_app_t *app, const char *widget)
@@ -2144,18 +2177,7 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
                            ap->graph_all_branches ? "Show All" : "Current (HEAD)");
         }
     } else if (strcmp(widget, "repo-sync") == 0) {
-        if (app->active_repo_idx >= app->ws.count)
-            return;
-        knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
-        char summary[256] = "";
-        int rc = knox_repo_sync(repo, false, summary, sizeof(summary));
-        app_set_status(app, "%s", summary);
-        if (rc == 1) {
-            app->modal = MODAL_CONFIRM_SYNC;
-        } else {
-            app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
-            knox_explorer_refresh_git_status(&app->explorer, &app->ws);
-        }
+        app_run_repo_sync(app, false);
     } else if (strcmp(widget, "fetch-all") == 0) {
         knox_batch_fetch_result_t bres = {0};
         char summary[256] = "";
@@ -2354,13 +2376,7 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
         if (ev->type == TAM_KEY_CHAR &&
             (ev->codepoint == 'y' || ev->codepoint == 'Y')) {
             app->modal = MODAL_NONE;
-            if (app->active_repo_idx < app->ws.count) {
-                char summary[256] = "";
-                knox_repo_sync(&app->ws.repos[app->active_repo_idx],
-                               true, summary, sizeof(summary));
-                app_set_status(app, "%s", summary);
-                app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
-            }
+            app_run_repo_sync(app, true);
         } else {
             app->modal = MODAL_NONE;
             app_set_status(app, "Cancelled protected branch push");
@@ -2845,6 +2861,10 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
             return;
         case 'B':
             app_execute_widget(app, "cycle-branch-filter");
+            return;
+        case 's':
+        case 'S':
+            app_execute_widget(app, "repo-sync");
             return;
         case 'F':
             app_execute_widget(app, "fetch-all");
