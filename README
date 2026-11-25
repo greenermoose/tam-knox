@@ -38,6 +38,10 @@ KEYS
   Home, End            Jump to start or end of list or document
   Enter                Explore selected repo, expand folder, open file, or
                        inspect commit details and changed files
+  Right                Explore selected repo (Repos), open closed folder or
+                       open file in viewer (Explorer)
+  Left                 Collapse open folder (Explorer), or return focus from
+                       file viewer to Explorer tree
   Space                Stage or unstage file in Changes; page down in viewer
   Alt+1, Backspace     Switch left sidebar to Source Control (Repos/Changes;
                        Backspace returns from Explorer)

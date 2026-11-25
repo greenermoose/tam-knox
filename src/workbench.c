@@ -1736,11 +1736,11 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
 
     const char *hints =
         (app->focus == FOCUS_SIDEBAR_REPOS)
-        ? "[Enter] Explore  [Alt+3] Graph  [f] Fetch  [s/Alt+S] Sync  [c/Alt+K] Branches  [z/Alt+Z] Stash  [g] Keys"
+        ? "[Enter/Right] Explore  [Alt+3] Graph  [f] Fetch  [s/Alt+S] Sync  [c/Alt+K] Branches  [z/Alt+Z] Stash  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_CHANGES)
         ? "[Space] Stage  [Enter] Diff  [Alt+C] Commit  [z/Alt+Z] Stash  [Alt+E] Edit  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_EXPLORER)
-        ? "[Enter] Open/Expand  [Bksp/Alt+1] Repos  [/] Filter  [Alt+E] Edit  [Tab] Focus  [g] Keys"
+        ? "[Enter/Right] Open  [Left] Collapse  [Bksp/Alt+1] Repos  [/] Filter  [g] Keys"
         : "[Enter] Inspect  [d/R] Diff/Render  [c/Alt+K] Branches  [Alt+V/H] Split  [g] Keys";
 
     char left_label[512];
@@ -2875,21 +2875,46 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         app_move_selection(app, 100000);
         return;
     case TAM_KEY_LEFT:
-        if (app->focus == FOCUS_MAIN_PANE) {
-            knox_pane_t *ap = app_active_pane(app);
-            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode) {
-                if (ap->doc.left_col >= 4)
-                    ap->doc.left_col -= 4;
-                else
-                    ap->doc.left_col = 0;
+        if (app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            if (app->explorer_cursor < app->explorer.flat_count) {
+                knox_tree_node_t *n = app->explorer.flat[app->explorer_cursor];
+                if (n && n->is_dir && n->expanded)
+                    knox_explorer_toggle_node(&app->explorer, app->explorer_cursor, &app->ws);
+            }
+        } else if (app->focus == FOCUS_MAIN_PANE) {
+            if (app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER) {
+                app->focus = FOCUS_SIDEBAR_EXPLORER;
+            } else {
+                knox_pane_t *ap = app_active_pane(app);
+                if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode) {
+                    if (ap->doc.left_col >= 4)
+                        ap->doc.left_col -= 4;
+                    else
+                        ap->doc.left_col = 0;
+                }
             }
         }
         return;
     case TAM_KEY_RIGHT:
-        if (app->focus == FOCUS_MAIN_PANE) {
-            knox_pane_t *ap = app_active_pane(app);
-            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
-                ap->doc.left_col += 4;
+        if (app->focus == FOCUS_SIDEBAR_REPOS) {
+            if (app->active_repo_idx < app->ws.count)
+                app_execute_widget(app, "explore-repo");
+        } else if (app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            if (app->explorer_cursor < app->explorer.flat_count) {
+                knox_tree_node_t *n = app->explorer.flat[app->explorer_cursor];
+                if (n && n->is_dir) {
+                    if (!n->expanded)
+                        knox_explorer_toggle_node(&app->explorer, app->explorer_cursor, &app->ws);
+                } else if (n) {
+                    app_open_file_in_tab(app, n->abs_path);
+                }
+            }
+        } else if (app->focus == FOCUS_MAIN_PANE) {
+            if (!(app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER)) {
+                knox_pane_t *ap = app_active_pane(app);
+                if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+                    ap->doc.left_col += 4;
+            }
         }
         return;
     case TAM_KEY_ENTER:

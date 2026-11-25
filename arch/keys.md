@@ -41,7 +41,9 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `Tab` / `Shift+Tab` | `Tab` / `Alt+I` | `focus-next` / `focus-prev` | Cycle focus across Sidebar (Repos -> Changes / Explorer) and Main Panes |
 | `Alt+1` / `Backspace` | `Alt+1` / `Backspace` | `view-source-control` | Focus left sidebar in Source Control mode (`Backspace` returns from Explorer, syncing active repo) |
 | `Alt+2` | `Alt+2` | `view-explorer` | Focus left sidebar in Explorer tree mode |
-| `Enter` (in Repos) | `Enter` (in Repos) | `explore-repo` | Switch left sidebar to Explorer and expand the active repository |
+| `Enter` / `Right` (in Repos) | `Enter` / `Right` (in Repos) | `explore-repo` | Switch left sidebar to Explorer and expand the active repository |
+| `Right` (in Explorer) | `Right` (in Explorer) | *(tree/viewer)* | Open closed folder, or open selected file in File Viewer and focus it |
+| `Left` (Explorer / Viewer) | `Left` (Explorer / Viewer) | *(tree/viewer)* | Collapse open folder in Explorer, or move focus from File Viewer back to Explorer tree |
 | `Alt+3` | `Alt+3` | `view-graph` | Focus or open the Git Graph tab for the active repository |
 | `Alt+B` | `Alt+B` | `toggle-sidebar` | Show or hide the left sidebar |
 | `Alt+V` | `Alt+V` | `split-vertical` | Split active main pane side-by-side (left / right) |

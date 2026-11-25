@@ -243,8 +243,9 @@ static void test_pty_explore_repo(const char *bin)
 
     char *repo_a = tam_path_join(ws_dir, "alpha-repo");
     char *repo_b = tam_path_join(ws_dir, "beta-repo");
+    char *sub_dir = tam_path_join(repo_b, "sub");
     assert(tam_fs_mkdir_p(repo_a, 0755));
-    assert(tam_fs_mkdir_p(repo_b, 0755));
+    assert(tam_fs_mkdir_p(sub_dir, 0755));
 
     run_git((const char *[]){"git", "-C", repo_a, "init", "-b", "dev", NULL});
     run_git((const char *[]){"git", "-C", repo_a, "config", "user.name", "Fred", NULL});
@@ -258,8 +259,10 @@ static void test_pty_explore_repo(const char *bin)
     run_git((const char *[]){"git", "-C", repo_b, "config", "user.name", "Fred", NULL});
     run_git((const char *[]){"git", "-C", repo_b, "config", "user.email", "fred@example.com", NULL});
     char *fb = tam_path_join(repo_b, "beta_only.txt");
+    char *fn = tam_path_join(sub_dir, "nested.txt");
     assert(tam_fs_write_atomic(fb, "beta\n", 5, 0644));
-    run_git((const char *[]){"git", "-C", repo_b, "add", "--", "beta_only.txt", NULL});
+    assert(tam_fs_write_atomic(fn, "nested contents\n", 16, 0644));
+    run_git((const char *[]){"git", "-C", repo_b, "add", "--", "beta_only.txt", "sub/nested.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_b, "commit", "-m", "beta", NULL});
 
     int mfd = posix_openpt(O_RDWR | O_NOCTTY);
@@ -297,13 +300,35 @@ static void test_pty_explore_repo(const char *bin)
     assert(strstr(out, "alpha-repo") != NULL);
     assert(strstr(out, "beta-repo") != NULL);
 
-    /* Move to beta-repo ('j') and press Return -> switches to Explorer & expands beta-repo */
-    assert(write(mfd, "j\r", 2) == 2);
+    /* 1. Move to beta-repo ('j') and press Right Arrow -> switches to Explorer & expands beta-repo */
+    assert(write(mfd, "j\033[C", 4) == 4);
     assert(wait_for_pty_text(mfd, out, sizeof(out), "beta_only.txt", 3000));
     assert(strstr(out, "EXPLORER") != NULL);
     assert(strstr(out, "Exploring beta-repo") != NULL);
+    assert(strstr(out, "nested.txt") == NULL);
 
-    /* Press Backspace (0x7f) -> returns to Source Control with beta-repo selected */
+    /* 2. Move to closed folder 'sub' ('j') and press Right Arrow -> opens folder & shows nested.txt */
+    assert(write(mfd, "j\033[C", 4) == 4);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "nested.txt", 3000));
+
+    /* 3. Move to 'nested.txt' ('j') and press Right Arrow -> opens in File Viewer & focuses [Workbench] */
+    assert(write(mfd, "j\033[C", 4) == 4);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "nested contents", 3000));
+    assert(strstr(out, "[Workbench]") != NULL);
+
+    /* 4. Press Left Arrow in File Viewer -> moves focus back to [Explorer] */
+    assert(write(mfd, "\033[D", 3) == 3);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Explorer]", 3000));
+
+    /* 5. Move up to open folder 'sub' ('k') and press Left Arrow -> closes folder & hides nested.txt */
+    assert(write(mfd, "k\033[D", 4) == 4);
+    drain_pty(mfd, out, sizeof(out), 250);
+    assert(write(mfd, "\x0c", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 250);
+    assert(strstr(out, "beta_only.txt") != NULL);
+    assert(strstr(out, "sub") != NULL);
+
+    /* 6. Press Backspace (0x7f) -> returns to Source Control with beta-repo selected */
     assert(write(mfd, "\x7f", 1) == 1);
     assert(wait_for_pty_text(mfd, out, sizeof(out), "CHANGES: beta-repo", 3000));
     assert(strstr(out, "REPOSITORIES") != NULL);
@@ -317,8 +342,10 @@ static void test_pty_explore_repo(const char *bin)
     close(mfd);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
+    free(fn);
     free(fb);
     free(fa);
+    free(sub_dir);
     free(repo_b);
     free(repo_a);
     tam_fs_remove_tree(-100, ws_dir);
