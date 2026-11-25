@@ -49,13 +49,14 @@ typedef struct {
 } knox_widget_cmd_t;
 
 static const knox_widget_cmd_t WIDGET_TABLE[] = {
-    { "view-source-control", "Alt+1",         "Switch left sidebar to Source Control (Repos + Changes)" },
+    { "view-source-control", "Alt+1 / Bksp",  "Switch left sidebar to Source Control (Repos + Changes)" },
     { "view-explorer",       "Alt+2",         "Switch left sidebar to Folder Explorer tree" },
+    { "explore-repo",        "Enter (Repos)", "Open and expand active repository in Folder Explorer" },
     { "view-graph",          "Alt+3",         "Focus or open the Git Graph tab" },
     { "toggle-sidebar",      "Alt+B",         "Show or hide the left sidebar" },
     { "focus-next",          "Tab",           "Cycle focus across Sidebar and Main Workbench panes" },
     { "focus-prev",          "Shift+Tab",     "Cycle focus backward" },
-    { "open-or-inspect",     "Enter",         "Select repo, expand folder, open file, or inspect commit" },
+    { "open-or-inspect",     "Enter",         "Explore repo, expand folder, open file, or inspect commit" },
     { "stage-or-page-down",  "Space",         "Stage/unstage file in Changes, or page down in viewer" },
     { "repo-fetch",          "f",             "Fetch active repository from remote (git fetch --prune)" },
     { "repo-sync",           "s / Alt+S",     "Sync active repository with remote (fetch, pull --ff-only, push)" },
@@ -1735,11 +1736,11 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
 
     const char *hints =
         (app->focus == FOCUS_SIDEBAR_REPOS)
-        ? "[Enter] Graph  [f] Fetch  [s/Alt+S] Sync  [c/Alt+K] Branches  [z/Alt+Z] Stash  [Alt+A] Fetch All  [g] Keys"
+        ? "[Enter] Explore  [Alt+3] Graph  [f] Fetch  [s/Alt+S] Sync  [c/Alt+K] Branches  [z/Alt+Z] Stash  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_CHANGES)
         ? "[Space] Stage  [Enter] Diff  [Alt+C] Commit  [z/Alt+Z] Stash  [Alt+E] Edit  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_EXPLORER)
-        ? "[Enter] Open/Expand  [/] Filter  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [g] Keys"
+        ? "[Enter] Open/Expand  [Bksp/Alt+1] Repos  [/] Filter  [Alt+E] Edit  [Tab] Focus  [g] Keys"
         : "[Enter] Inspect  [d/R] Diff/Render  [c/Alt+K] Branches  [Alt+V/H] Split  [g] Keys";
 
     char left_label[512];
@@ -2005,6 +2006,21 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         app->palette_cursor = 0;
         app->chord_mods = 0;
     } else if (strcmp(widget, "view-source-control") == 0) {
+        if (app->focus == FOCUS_SIDEBAR_EXPLORER &&
+            app->explorer_cursor < app->explorer.flat_count) {
+            const knox_tree_node_t *n = app->explorer.flat[app->explorer_cursor];
+            if (n && n->abs_path) {
+                knox_repo_t *r = knox_workspace_find_repo_for_path(&app->ws, n->abs_path);
+                if (r) {
+                    size_t idx = (size_t)(r - app->ws.repos);
+                    if (idx != app->active_repo_idx) {
+                        app->active_repo_idx = idx;
+                        app->change_cursor = 0;
+                        app->change_top = 0;
+                    }
+                }
+            }
+        }
         app->sidebar_visible = true;
         app->sidebar_mode = SIDEBAR_SOURCE_CONTROL;
         app->focus = FOCUS_SIDEBAR_REPOS;
@@ -2012,12 +2028,37 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         app->sidebar_visible = true;
         app->sidebar_mode = SIDEBAR_EXPLORER;
         app->focus = FOCUS_SIDEBAR_EXPLORER;
+    } else if (strcmp(widget, "explore-repo") == 0) {
+        app->sidebar_visible = true;
+        app->sidebar_mode = SIDEBAR_EXPLORER;
+        app->focus = FOCUS_SIDEBAR_EXPLORER;
+        if (app->active_repo_idx < app->ws.count) {
+            const knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+            size_t flat_idx = 0;
+            if (knox_explorer_reveal_path(&app->explorer, repo->root_path,
+                                          &app->ws, &flat_idx) == 0) {
+                app->explorer_cursor = flat_idx;
+                app->explorer_top = flat_idx;
+                snprintf(app->status_msg, sizeof(app->status_msg),
+                         "Exploring %s", repo->name);
+            }
+        }
     } else if (strcmp(widget, "view-graph") == 0) {
         for (size_t i = 0; i < app->tab_count; i++) {
             if (app->tabs[i].active_pane &&
                 app->tabs[i].active_pane->content == KNOX_PANE_GRAPH) {
+                knox_pane_t *gp = app->tabs[i].active_pane;
                 app->active_tab = i;
                 app->focus = FOCUS_MAIN_PANE;
+                if (app->active_repo_idx < app->ws.count &&
+                    gp->repo_idx != app->active_repo_idx) {
+                    gp->repo_idx = app->active_repo_idx;
+                    gp->graph_cursor = 0;
+                    gp->graph_top = 0;
+                    app_ensure_repo_graph(app, app->active_repo_idx,
+                                          gp->graph_all_branches,
+                                          gp->graph_show_remotes, true);
+                }
                 return;
             }
         }
@@ -2331,18 +2372,8 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         }
     } else if (strcmp(widget, "open-or-inspect") == 0) {
         if (app->focus == FOCUS_SIDEBAR_REPOS) {
-            if (app->active_repo_idx < app->ws.count) {
-                app_execute_widget(app, "view-graph");
-                knox_pane_t *ap = app_active_pane(app);
-                if (ap && ap->content == KNOX_PANE_GRAPH) {
-                    ap->repo_idx = app->active_repo_idx;
-                    ap->graph_cursor = 0;
-                    ap->graph_top = 0;
-                    app_ensure_repo_graph(app, app->active_repo_idx,
-                                          ap->graph_all_branches,
-                                          ap->graph_show_remotes, true);
-                }
-            }
+            if (app->active_repo_idx < app->ws.count)
+                app_execute_widget(app, "explore-repo");
         } else if (app->focus == FOCUS_SIDEBAR_CHANGES) {
             if (app->active_repo_idx < app->ws.count) {
                 const knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
@@ -2863,6 +2894,10 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         return;
     case TAM_KEY_ENTER:
         app_execute_widget(app, "open-or-inspect");
+        return;
+    case TAM_KEY_BACKSPACE:
+        if (app->focus == FOCUS_SIDEBAR_EXPLORER)
+            app_execute_widget(app, "view-source-control");
         return;
     case TAM_KEY_ESC:
         app_execute_widget(app, "cancel-mode");

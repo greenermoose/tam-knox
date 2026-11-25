@@ -85,6 +85,62 @@ static void test_explorer_filter(void)
     tam_fs_remove_tree(-100, root);
 }
 
+static void test_explorer_reveal(void)
+{
+    char tpl[] = "/tmp/knox-rev-XXXXXX";
+    char *root = mkdtemp(tpl);
+    assert(root != NULL);
+
+    char *repo_a = tam_path_join(root, "repo-a");
+    char *nested_parent = tam_path_join(root, "sub");
+    char *repo_b = tam_path_join(nested_parent, "repo-b");
+    assert(tam_fs_mkdir_p(repo_a, 0755));
+    assert(tam_fs_mkdir_p(repo_b, 0755));
+
+    char *fa = tam_path_join(repo_a, "alpha.txt");
+    char *fb = tam_path_join(repo_b, "beta.txt");
+    assert(tam_fs_write_atomic(fa, "a\n", 2, 0644));
+    assert(tam_fs_write_atomic(fb, "b\n", 2, 0644));
+
+    knox_explorer_t ex;
+    assert(knox_explorer_init(&ex, root, false) == 0);
+    assert(!flat_contains_name(&ex, "alpha.txt"));
+    assert(!flat_contains_name(&ex, "beta.txt"));
+
+    /* Reveal direct child repo */
+    size_t idx = 0;
+    assert(knox_explorer_reveal_path(&ex, repo_a, NULL, &idx) == 0);
+    assert(idx < ex.flat_count);
+    assert(strcmp(ex.flat[idx]->name, "repo-a") == 0);
+    assert(ex.flat[idx]->expanded);
+    assert(flat_contains_name(&ex, "alpha.txt"));
+
+    /* Active filter is cleared when revealing a nested repo */
+    assert(knox_explorer_set_filter(&ex, "alpha", NULL) == 0);
+    assert(ex.filter[0] != '\0');
+    assert(knox_explorer_reveal_path(&ex, repo_b, NULL, &idx) == 0);
+    assert(ex.filter[0] == '\0');
+    assert(strcmp(ex.flat[idx]->name, "repo-b") == 0);
+    assert(ex.flat[idx]->expanded);
+    assert(flat_contains_name(&ex, "beta.txt"));
+
+    /* Reveal root itself (single-repo launch) */
+    assert(knox_explorer_reveal_path(&ex, root, NULL, &idx) == 0);
+    assert(idx == 0);
+    assert(ex.flat[0] == ex.root);
+
+    /* Non-descendant path returns -1 */
+    assert(knox_explorer_reveal_path(&ex, "/tmp", NULL, &idx) == -1);
+
+    knox_explorer_free(&ex);
+    free(fb);
+    free(fa);
+    free(repo_b);
+    free(nested_parent);
+    free(repo_a);
+    tam_fs_remove_tree(-100, root);
+}
+
 static size_t g_progress_calls = 0;
 
 static void batch_progress_cb(size_t idx, size_t total,
@@ -226,6 +282,7 @@ static void test_keymap_ini(void)
     const char *w = knox_keymap_lookup(&km, &ev_f5);
     assert(w != NULL && strcmp(w, "update") == 0);
     assert(knox_keymap_is_valid_widget("repo-fetch"));
+    assert(knox_keymap_is_valid_widget("explore-repo"));
 
     tam_key_event_t ev_ax = { .type = TAM_KEY_CHAR, .codepoint = 'x', .mods = TAM_MOD_ALT };
     w = knox_keymap_lookup(&km, &ev_ax);
@@ -245,8 +302,9 @@ static void test_keymap_ini(void)
 int main(void)
 {
     test_explorer_filter();
+    test_explorer_reveal();
     test_batch_fetch();
     test_keymap_ini();
-    printf("test-p3: all explorer filter, batch fetch, and keymap.ini tests passed\n");
+    printf("test-p3: all explorer filter, reveal, batch fetch, and keymap.ini tests passed\n");
     return 0;
 }

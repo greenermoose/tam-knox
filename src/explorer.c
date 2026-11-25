@@ -366,3 +366,87 @@ int knox_explorer_rebuild(knox_explorer_t *ex, const knox_workspace_t *ws)
         knox_explorer_refresh_git_status(ex, ws);
     return rc;
 }
+
+int knox_explorer_reveal_path(knox_explorer_t *ex, const char *target_abs_path,
+                              const knox_workspace_t *ws, size_t *out_flat_idx)
+{
+    if (!ex || !ex->root || !target_abs_path || !*target_abs_path)
+        return -1;
+
+    char resolved[4096];
+    const char *target = realpath(target_abs_path, resolved)
+                         ? resolved
+                         : target_abs_path;
+
+    const char *root_abs = ex->root->abs_path;
+    if (!root_abs)
+        return -1;
+
+    size_t rlen = strlen(root_abs);
+    const char *rel = NULL;
+    if (strcmp(target, root_abs) == 0) {
+        rel = "";
+    } else if (rlen == 1 && root_abs[0] == '/') {
+        if (target[0] == '/' && target[1] != '\0')
+            rel = target + 1;
+    } else if (strncmp(target, root_abs, rlen) == 0 && target[rlen] == '/') {
+        rel = target + rlen + 1;
+    }
+    if (!rel)
+        return -1;
+
+    ex->filter[0] = '\0';
+    ex->root->expanded = true;
+    if (!ex->root->loaded)
+        tree_node_load_children(ex->root, ex->show_hidden);
+
+    knox_tree_node_t *cur = ex->root;
+    const char *p = rel;
+    while (*p) {
+        while (*p == '/')
+            p++;
+        if (!*p)
+            break;
+        const char *slash = strchr(p, '/');
+        size_t comp_len = slash ? (size_t)(slash - p) : strlen(p);
+
+        if (!cur->is_dir)
+            return -1;
+        cur->expanded = true;
+        if (!cur->loaded)
+            tree_node_load_children(cur, ex->show_hidden);
+
+        knox_tree_node_t *found = NULL;
+        for (size_t i = 0; i < cur->child_count; i++) {
+            knox_tree_node_t *ch = cur->children[i];
+            if (ch->name && strlen(ch->name) == comp_len &&
+                memcmp(ch->name, p, comp_len) == 0) {
+                found = ch;
+                break;
+            }
+        }
+        if (!found)
+            return -1;
+        cur = found;
+        p += comp_len;
+    }
+
+    if (cur->is_dir) {
+        cur->expanded = true;
+        if (!cur->loaded)
+            tree_node_load_children(cur, ex->show_hidden);
+    }
+
+    ex->flat_count = 0;
+    flatten_tree_rec(ex, ex->root);
+    knox_explorer_refresh_git_status(ex, ws);
+
+    for (size_t i = 0; i < ex->flat_count; i++) {
+        if (ex->flat[i] == cur) {
+            if (out_flat_idx)
+                *out_flat_idx = i;
+            return 0;
+        }
+    }
+    return -1;
+}

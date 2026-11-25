@@ -360,6 +360,9 @@ int  knox_explorer_set_filter(knox_explorer_t *ex, const char *query,
                               const knox_workspace_t *ws);
 void knox_explorer_clear_filter(knox_explorer_t *ex);
 int  knox_explorer_rebuild(knox_explorer_t *ex, const knox_workspace_t *ws);
+int  knox_explorer_reveal_path(knox_explorer_t *ex, const char *target_abs_path,
+                               const knox_workspace_t *ws,
+                               size_t *out_flat_idx);
 
 /* ========================================================================= */
 /* 4. Zero-Dependency C11 Syntax Lexer (src/syntax.c)                        */

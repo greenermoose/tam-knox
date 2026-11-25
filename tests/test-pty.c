@@ -235,6 +235,95 @@ static void test_pty_repo_sync(const char *bin)
     tam_fs_remove_tree(-100, ws_dir);
 }
 
+static void test_pty_explore_repo(const char *bin)
+{
+    char tmp_tpl[] = "/tmp/knox-pty-exp-XXXXXX";
+    char *ws_dir = mkdtemp(tmp_tpl);
+    assert(ws_dir != NULL);
+
+    char *repo_a = tam_path_join(ws_dir, "alpha-repo");
+    char *repo_b = tam_path_join(ws_dir, "beta-repo");
+    assert(tam_fs_mkdir_p(repo_a, 0755));
+    assert(tam_fs_mkdir_p(repo_b, 0755));
+
+    run_git((const char *[]){"git", "-C", repo_a, "init", "-b", "dev", NULL});
+    run_git((const char *[]){"git", "-C", repo_a, "config", "user.name", "Fred", NULL});
+    run_git((const char *[]){"git", "-C", repo_a, "config", "user.email", "fred@example.com", NULL});
+    char *fa = tam_path_join(repo_a, "alpha_only.txt");
+    assert(tam_fs_write_atomic(fa, "alpha\n", 6, 0644));
+    run_git((const char *[]){"git", "-C", repo_a, "add", "--", "alpha_only.txt", NULL});
+    run_git((const char *[]){"git", "-C", repo_a, "commit", "-m", "alpha", NULL});
+
+    run_git((const char *[]){"git", "-C", repo_b, "init", "-b", "dev", NULL});
+    run_git((const char *[]){"git", "-C", repo_b, "config", "user.name", "Fred", NULL});
+    run_git((const char *[]){"git", "-C", repo_b, "config", "user.email", "fred@example.com", NULL});
+    char *fb = tam_path_join(repo_b, "beta_only.txt");
+    assert(tam_fs_write_atomic(fb, "beta\n", 5, 0644));
+    run_git((const char *[]){"git", "-C", repo_b, "add", "--", "beta_only.txt", NULL});
+    run_git((const char *[]){"git", "-C", repo_b, "commit", "-m", "beta", NULL});
+
+    int mfd = posix_openpt(O_RDWR | O_NOCTTY);
+    assert(mfd >= 0);
+    assert(grantpt(mfd) == 0);
+    assert(unlockpt(mfd) == 0);
+    char *sname = ptsname(mfd);
+    assert(sname != NULL);
+
+    struct winsize wsz = { .ws_row = 30, .ws_col = 110 };
+    pid_t pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        close(mfd);
+        setsid();
+        int sfd = open(sname, O_RDWR);
+        if (sfd < 0)
+            _exit(127);
+        ioctl(sfd, TIOCSCTTY, 0);
+        ioctl(sfd, TIOCSWINSZ, &wsz);
+        dup2(sfd, STDIN_FILENO);
+        dup2(sfd, STDOUT_FILENO);
+        dup2(sfd, STDERR_FILENO);
+        if (sfd > 2)
+            close(sfd);
+        setenv("TERM", "xterm-256color", 1);
+        unsetenv("TAM_KNOX_KEYMAP");
+        execl(bin, bin, ws_dir, (char *)NULL);
+        _exit(127);
+    }
+
+    char out[65536];
+    size_t n = drain_pty(mfd, out, sizeof(out), 800);
+    assert(n > 0);
+    assert(strstr(out, "alpha-repo") != NULL);
+    assert(strstr(out, "beta-repo") != NULL);
+
+    /* Move to beta-repo ('j') and press Return -> switches to Explorer & expands beta-repo */
+    assert(write(mfd, "j\r", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "beta_only.txt", 3000));
+    assert(strstr(out, "EXPLORER") != NULL);
+    assert(strstr(out, "Exploring beta-repo") != NULL);
+
+    /* Press Backspace (0x7f) -> returns to Source Control with beta-repo selected */
+    assert(write(mfd, "\x7f", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "CHANGES: beta-repo", 3000));
+    assert(strstr(out, "REPOSITORIES") != NULL);
+
+    /* Quit cleanly */
+    assert(write(mfd, "\x11", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    close(mfd);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+    free(fb);
+    free(fa);
+    free(repo_b);
+    free(repo_a);
+    tam_fs_remove_tree(-100, ws_dir);
+}
+
 int main(int argc, char **argv)
 {
     const char *bin = (argc > 1) ? argv[1] : "build/tam-knox";
@@ -300,8 +389,8 @@ int main(int argc, char **argv)
     assert(strstr(out, "demo-repo") != NULL);
     assert(strstr(out, "Initial README") != NULL);
 
-    /* 1. Press Enter on repo -> focuses Git Graph, then Enter again -> opens Commit Details split */
-    assert(write(mfd, "\r", 1) == 1);
+    /* 1. Focus Git Graph (Alt+3), then press Enter -> opens Commit Details split */
+    assert(write(mfd, "\0333", 2) == 2);
     drain_pty(mfd, out, sizeof(out), 150);
     assert(write(mfd, "\r", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 250);
@@ -381,6 +470,7 @@ int main(int argc, char **argv)
     tam_fs_remove_tree(-100, ws_dir);
 
     test_pty_repo_sync(bin);
+    test_pty_explore_repo(bin);
 
     printf("test-pty: all interactive TUI checks passed\n");
     return 0;

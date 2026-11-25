@@ -39,8 +39,9 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | Key | `TERM=linux` / Compact | Canonical Widget | Behavior |
 | --- | --- | --- | --- |
 | `Tab` / `Shift+Tab` | `Tab` / `Alt+I` | `focus-next` / `focus-prev` | Cycle focus across Sidebar (Repos -> Changes / Explorer) and Main Panes |
-| `Alt+1` | `Alt+1` | `view-source-control` | Focus left sidebar in Source Control mode (Repositories + Changes) |
+| `Alt+1` / `Backspace` | `Alt+1` / `Backspace` | `view-source-control` | Focus left sidebar in Source Control mode (`Backspace` returns from Explorer, syncing active repo) |
 | `Alt+2` | `Alt+2` | `view-explorer` | Focus left sidebar in Explorer tree mode |
+| `Enter` (in Repos) | `Enter` (in Repos) | `explore-repo` | Switch left sidebar to Explorer and expand the active repository |
 | `Alt+3` | `Alt+3` | `view-graph` | Focus or open the Git Graph tab for the active repository |
 | `Alt+B` | `Alt+B` | `toggle-sidebar` | Show or hide the left sidebar |
 | `Alt+V` | `Alt+V` | `split-vertical` | Split active main pane side-by-side (left / right) |
@@ -58,7 +59,7 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `R` / `Alt+R` | `R` / `Alt+R` | `toggle-render-mode` | Toggle Rendered vs. Raw syntax-colored mode in File Viewer |
 | `B` / `Alt+F` | `B` / `Alt+F` | `cycle-branch-filter` | Toggle Git Graph between All Branches and Current Branch (`HEAD`) |
 | `Space` | `Space` | `stage-or-page-down` | Toggle stage/unstage on a file in Changes; scroll page down in File/Diff Viewer |
-| `Enter` | `Enter` | `open-or-inspect` | Select repo, expand/collapse Explorer folder, open file, or inspect commit details & changed files |
+| `Enter` | `Enter` | `open-or-inspect` | Explore selected repo, expand/collapse Explorer folder, open file, or inspect commit details & changed files |
 | `Escape` | `Escape` | `cancel-mode` | Close overlay/prompt, collapse commit details split, or clear search highlight |
 | `]`, `[` | `]`, `[` | `link-next` / `link-prev` | Jump to next / previous hyperlink in rendered Markdown/HTML view |
 | `b`, `PageUp` | `b`, `PageUp` | `page-up` | Scroll page up |

@@ -10,6 +10,7 @@
 static const char *const VALID_WIDGETS[] = {
     "view-source-control",
     "view-explorer",
+    "explore-repo",
     "view-graph",
     "toggle-sidebar",
     "focus-next",
