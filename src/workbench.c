@@ -689,23 +689,29 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 
     const char *bar_bg = (app->opts.color && !app->opts.linux_vt)
                          ? "\033[38;5;254;48;5;236m" : "\033[7m";
+    const struct box_chars *bx = render_box_chars(app->opts.ascii);
 
     char prefix_plain[256];
     snprintf(prefix_plain, sizeof(prefix_plain),
              " tam-knox %s (%zu repos) ", ws_base, app->ws.count);
-    int prefix_w = visible_text_cols(prefix_plain);
-    int avail = cols - prefix_w;
-    if (avail < 0)
-        avail = 0;
 
-    tam_str_t bar = tam_str_new("");
+    tam_str_t prefix = tam_str_new("");
     if (app->opts.color) {
-        bar = tam_str_cat_printf(bar,
+        prefix = tam_str_cat_printf(prefix,
             " \033[1;36;48;5;236mtam-knox\033[0m%s \033[1;38;5;231;48;5;236m%s\033[0m%s (%zu repos) ",
             bar_bg, ws_base, bar_bg, app->ws.count);
     } else {
-        bar = tam_str_cat(bar, prefix_plain);
+        prefix = tam_str_cat(prefix, prefix_plain);
     }
+
+    int avail = 0;
+    if (app->sidebar_visible) {
+        avail = cols - app->sidebar_width - 1;
+    } else {
+        avail = cols - visible_text_cols(prefix_plain);
+    }
+    if (avail < 0)
+        avail = 0;
 
     size_t ntabs = app->tab_count;
     if (ntabs > MAX_TABS)
@@ -717,7 +723,8 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
     int full_sum = 0;
     for (size_t i = 0; i < ntabs; i++) {
         int num_len = (i <= 9) ? 1 : 2;
-        fixed_sum += 4 + num_len;
+        int lead_sep = (app->sidebar_visible && i == 0) ? 0 : 1;
+        fixed_sum += lead_sep + 3 + num_len;
         full_w[i] = visible_text_cols(app->tabs[i].title);
         alloc_w[i] = full_w[i];
         full_sum += full_w[i];
@@ -745,6 +752,7 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
         }
     }
 
+    tam_str_t tabs_str = tam_str_new("");
     for (size_t i = 0; i < ntabs; i++) {
         bool act = (i == app->active_tab);
         char num_label[16];
@@ -757,18 +765,39 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
         truncate_text_cols(app->tabs[i].title, alloc_w[i],
                            app->opts.ascii, disp_title, sizeof(disp_title));
 
+        const char *sep = (app->sidebar_visible && i == 0) ? "" : "|";
         if (app->opts.color) {
-            bar = tam_str_cat_printf(bar, "|%s %s:%s \033[0m%s",
+            tabs_str = tam_str_cat_printf(tabs_str, "%s%s %s:%s \033[0m%s",
+                sep,
                 act ? sgr_header_focused(app) : "\033[1;38;5;252;48;5;238m",
                 num_label, disp_title, bar_bg);
         } else {
-            bar = tam_str_cat_printf(bar, "|%s%s:%s%s",
-                act ? "[" : " ", num_label, disp_title, act ? "]" : " ");
+            tabs_str = tam_str_cat_printf(tabs_str, "%s%s%s:%s%s",
+                sep, act ? "[" : " ", num_label, disp_title, act ? "]" : " ");
         }
     }
 
-    frame_move_write(frame, 1, 1, bar, cols, app->opts.color ? bar_bg : "", true);
-    tam_str_free(bar);
+    if (app->sidebar_visible) {
+        int sep_x = app->sidebar_width + 1;
+        int tab_x = app->sidebar_width + 2;
+        const char *sep_sgr = (app->opts.color && !app->opts.linux_vt)
+                              ? "\033[38;5;244;48;5;236m"
+                              : (app->opts.color ? bar_bg : "");
+        frame_move_write(frame, 1, 1, prefix, app->sidebar_width,
+                         app->opts.color ? bar_bg : "", true);
+        frame_move_write(frame, 1, sep_x, bx->v, 1, sep_sgr, false);
+        frame_move_write(frame, 1, tab_x, tabs_str, avail,
+                         app->opts.color ? bar_bg : "", true);
+    } else {
+        tam_str_t bar = tam_str_new(prefix);
+        bar = tam_str_cat(bar, tabs_str);
+        frame_move_write(frame, 1, 1, bar, cols,
+                         app->opts.color ? bar_bg : "", true);
+        tam_str_free(bar);
+    }
+
+    tam_str_free(tabs_str);
+    tam_str_free(prefix);
 }
 
 static void render_sidebar(knox_app_t *app, tam_str_t *frame,

@@ -17,3 +17,4 @@ viewer, written in C11 on top of `libtam`.
 | **1.0.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `f` in normal mode (`repo-fetch`) to fetch the selected repository from its remote (`git fetch --prune`) | Done (2026-11-25) |
 | **1.0.2** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Press `Return`/`Right` on a repo to open and expand it in Explorer, `Right`/`Left` to expand/collapse folders and move between Explorer and File Viewer, and `Backspace` to return to Source Control | Done (2026-11-25) |
 | **1.0.3** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Direct tab focus and selection via `1`–`9`, `0` (10 tabs in keyboard order), streamlined top bar without sidebar mode hints, and on-demand tab title shrinking so all 10 tabs fit | Done (2026-11-25) |
+| **1.0.4** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Align the top bar tab strip and vertical divider with the main workbench pane when the sidebar is visible | Done (2026-11-25) |

@@ -7,11 +7,11 @@ Updated: 2026-11-25, with W4
 
 STATE
 
-  Version 1.0.3 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
-  P3 (0.3.0-1.0.3) are complete and pass make test, make sanitize, and
+  Version 1.0.4 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
+  P3 (0.3.0-1.0.4) are complete and pass make test, make sanitize, and
   idol-check (W1, W2, W3, W4).
 
-  Features working in 1.0.3:
+  Features working in 1.0.4:
   - Multi-repository Source Control sidebar (repository discovery,
     branch name, dirty/clean state, changed files list, ahead/behind
     count, path-scoped staging and committing, single-repo remote fetch

@@ -401,9 +401,11 @@ static void test_pty_tab_number_select(const char *bin)
     char out[65536];
     size_t n = drain_pty(mfd, out, sizeof(out), 800);
     assert(n > 0);
-    /* Top bar omits Alt+1/Alt+2 hints and shows full 1:Git Graph title */
+    /* Top bar omits Alt+1/Alt+2 hints, aligns tab strip with main pane (col 38 on 110-col PTY),
+     * and shows full 1:Git Graph title */
     assert(strstr(out, "[Alt+1 Source Control]") == NULL);
     assert(strstr(out, "[Alt+2 Explorer]") == NULL);
+    assert(strstr(out, "\033[1;38H") != NULL);
     assert(strstr(out, "1:Git Graph") != NULL);
 
     /* Open tab 2 (Diff notes.txt) from Changes */
