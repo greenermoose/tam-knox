@@ -70,10 +70,62 @@ static void test_viewer_markdown_and_html_render(void)
     free(tmp_md);
 }
 
+static void test_side_by_side_diff_builder(void)
+{
+    const char *sample_diff =
+        "diff --git a/hello.c b/hello.c\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/hello.c\n"
+        "+++ b/hello.c\n"
+        "@@ -10,4 +10,5 @@ int main(void)\n"
+        "     int a = 1;\n"
+        "-    int b = 2;\n"
+        "+    int b = 20;\n"
+        "+    int c = 30;\n"
+        "     return 0;\n";
+
+    knox_viewer_doc_t doc = {0};
+    assert(knox_viewer_open_buffer(&doc, KNOX_DOC_DIFF, "Diff hello.c",
+                                   "demo", "demo > hello.c",
+                                   sample_diff, strlen(sample_diff),
+                                   KNOX_LANG_DIFF) == 0);
+    assert(doc.side_by_side == false);
+    assert(knox_viewer_toggle_side_by_side(&doc) == 0);
+    assert(doc.side_by_side == true);
+    /* 4 headers + 1 hunk + 1 context (10) + 2 change rows + 1 context = 9 rows */
+    assert(doc.sbs_count == 9);
+    assert(doc.sbs_rows[4].kind == KNOX_SBS_HUNK);
+    assert(doc.sbs_rows[5].kind == KNOX_SBS_CONTEXT);
+    assert(doc.sbs_rows[5].old_lineno == 10);
+    assert(doc.sbs_rows[5].new_lineno == 10);
+    /* Paired replacement row: old line 11 (-int b = 2;) paired with new line 11 (+int b = 20;) */
+    assert(doc.sbs_rows[6].kind == KNOX_SBS_CHANGE);
+    assert(doc.sbs_rows[6].old_lineno == 11);
+    assert(doc.sbs_rows[6].old_changed == true);
+    assert(doc.sbs_rows[6].new_lineno == 11);
+    assert(doc.sbs_rows[6].new_changed == true);
+    /* Second added line has old_lineno == 0 and new_lineno == 12 */
+    assert(doc.sbs_rows[7].kind == KNOX_SBS_CHANGE);
+    assert(doc.sbs_rows[7].old_lineno == 0);
+    assert(doc.sbs_rows[7].new_lineno == 12);
+    assert(doc.sbs_rows[7].new_changed == true);
+    /* Trailing context line */
+    assert(doc.sbs_rows[8].kind == KNOX_SBS_CONTEXT);
+    assert(doc.sbs_rows[8].old_lineno == 12);
+    assert(doc.sbs_rows[8].new_lineno == 13);
+
+    /* Search inside side-by-side mode */
+    assert(knox_viewer_search(&doc, "c = 30", true, false) == true);
+    assert(doc.cursor_line == 7);
+
+    knox_viewer_free(&doc);
+}
+
 int main(void)
 {
     test_syntax_detection_and_lexing();
     test_viewer_markdown_and_html_render();
+    test_side_by_side_diff_builder();
     printf("test-syntax-render: all tests passed\n");
     return 0;
 }

@@ -104,6 +104,28 @@ int main(int argc, char **argv)
     drain_pty(mfd, out, sizeof(out), 250);
     assert(strstr(out, "Commit Details:") != NULL);
 
+    /* Press Enter on the changed file in Commit Details -> opens Diff Viewer, then 'd' toggles Side-by-Side Diff */
+    assert(write(mfd, "\r", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "Unified Diff") != NULL);
+
+    assert(write(mfd, "d", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "Side-by-Side Diff") != NULL);
+
+    /* Open Branch Modal (Alt+K) and close with Esc, then open Stash Modal (Alt+Z) and close with Esc */
+    assert(write(mfd, "\033k", 2) == 2);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "Branches: demo-repo") != NULL);
+    assert(write(mfd, "\033", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 150);
+
+    assert(write(mfd, "\033z", 2) == 2);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "Stashes: demo-repo") != NULL);
+    assert(write(mfd, "\033", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 150);
+
     /* 2. Switch sidebar to Explorer (Alt+2), move down to README.md, press Enter to open file viewer */
     assert(write(mfd, "\0332", 2) == 2);
     drain_pty(mfd, out, sizeof(out), 150);

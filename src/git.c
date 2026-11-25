@@ -910,3 +910,467 @@ void knox_commit_details_free(knox_commit_details_t *d)
     free(d->files);
     *d = (knox_commit_details_t){0};
 }
+
+/* ========================================================================= */
+/* Branch Listing, Checkout, and Creation                                    */
+/* ========================================================================= */
+
+static int cmp_branches(const void *a, const void *b)
+{
+    const knox_branch_info_t *ba = (const knox_branch_info_t *)a;
+    const knox_branch_info_t *bb = (const knox_branch_info_t *)b;
+    if (ba->is_current != bb->is_current)
+        return ba->is_current ? -1 : 1;
+    if (ba->is_remote != bb->is_remote)
+        return ba->is_remote ? 1 : -1;
+    return strcmp(ba->name ? ba->name : "", bb->name ? bb->name : "");
+}
+
+void knox_branch_list_free(knox_branch_info_t *list, size_t count)
+{
+    if (!list)
+        return;
+    for (size_t i = 0; i < count; i++) {
+        free(list[i].name);
+        free(list[i].upstream);
+        free(list[i].subject);
+    }
+    free(list);
+}
+
+int knox_repo_list_branches(const knox_repo_t *repo,
+                            knox_branch_info_t **out_list,
+                            size_t *out_count)
+{
+    if (!out_list || !out_count)
+        return -1;
+    *out_list = NULL;
+    *out_count = 0;
+    if (!repo || !repo->root_path)
+        return -1;
+
+    const char *fmt = "--format=%(HEAD)" GIT_FIELD_SEP "%(refname:short)" GIT_FIELD_SEP
+                      "%(refname)" GIT_FIELD_SEP "%(upstream:short)" GIT_FIELD_SEP
+                      "%(objectname:short)" GIT_FIELD_SEP "%(contents:subject)";
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "for-each-ref",
+        "--sort=-committerdate", fmt,
+        "refs/heads", "refs/remotes", NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    if (res.exit_code != 0 || !res.stdout_buf) {
+        tam_exec_result_free(&res);
+        return -1;
+    }
+
+    size_t cap = 0;
+    size_t count = 0;
+    knox_branch_info_t *list = NULL;
+
+    char *line = res.stdout_buf;
+    while (*line) {
+        char *nl = strchr(line, '\n');
+        if (nl)
+            *nl = '\0';
+
+        char *fields[6] = {0};
+        size_t nf = 0;
+        char *cur = line;
+        while (nf < 5) {
+            char *sep = strchr(cur, '\x1f');
+            if (!sep)
+                break;
+            *sep = '\0';
+            fields[nf++] = cur;
+            cur = sep + 1;
+        }
+        fields[nf++] = cur;
+
+        if (nf == 6 && fields[1][0] != '\0') {
+            const char *short_name = fields[1];
+            const char *full_ref = fields[2];
+            bool is_remote = (strncmp(full_ref, "refs/remotes/", 13) == 0);
+            /* Skip symbolic remote HEAD refs like origin/HEAD or bare remote names */
+            size_t sn_len = strlen(short_name);
+            bool is_sym_head = (is_remote &&
+                                ((sn_len >= 5 && strcmp(short_name + sn_len - 5, "/HEAD") == 0) ||
+                                 strchr(short_name, '/') == NULL));
+            if (!is_sym_head) {
+                if (count == cap) {
+                    size_t next = cap ? cap * 2 : 16;
+                    knox_branch_info_t *grown = realloc(list, next * sizeof(*grown));
+                    if (!grown)
+                        break;
+                    list = grown;
+                    cap = next;
+                }
+                knox_branch_info_t *b = &list[count++];
+                *b = (knox_branch_info_t){
+                    .name = xstrdup(short_name),
+                    .upstream = (fields[3][0] != '\0') ? xstrdup(fields[3]) : NULL,
+                    .subject = xstrdup(fields[5]),
+                    .is_remote = is_remote,
+                    .is_current = (fields[0][0] == '*') ||
+                                  (!is_remote && repo->branch &&
+                                   strcmp(short_name, repo->branch) == 0)
+                };
+                snprintf(b->hash, sizeof(b->hash), "%.40s", fields[4]);
+            }
+        }
+
+        if (!nl)
+            break;
+        line = nl + 1;
+    }
+
+    tam_exec_result_free(&res);
+    if (count > 1)
+        qsort(list, count, sizeof(*list), cmp_branches);
+
+    *out_list = list;
+    *out_count = count;
+    return 0;
+}
+
+static void trim_first_line(char *buf)
+{
+    if (!buf)
+        return;
+    char *nl = strchr(buf, '\n');
+    if (nl)
+        *nl = '\0';
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\r' || buf[len - 1] == ' '))
+        buf[--len] = '\0';
+}
+
+int knox_repo_checkout_branch(knox_repo_t *repo, const char *branch_name,
+                              bool is_remote, char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path || !branch_name || !*branch_name) {
+        if (out_summary && sumcap > 0)
+            snprintf(out_summary, sumcap, "Branch name cannot be empty");
+        return -1;
+    }
+
+    tam_exec_result_t res = {0};
+    const char *target_display = branch_name;
+
+    if (is_remote) {
+        const char *slash = strchr(branch_name, '/');
+        const char *local_name = (slash && slash[1]) ? slash + 1 : branch_name;
+        target_display = local_name;
+
+        /* Check if local branch already exists */
+        char ref_check[256];
+        snprintf(ref_check, sizeof(ref_check), "refs/heads/%s", local_name);
+        const char *chk_argv[] = {
+            "git", "-C", repo->root_path, "show-ref", "--verify", "--quiet",
+            ref_check, NULL
+        };
+        tam_exec_result_t chk = tam_exec(chk_argv, GIT_DEFAULT_TIMEOUT_MS);
+        bool local_exists = (chk.exit_code == 0);
+        tam_exec_result_free(&chk);
+
+        if (local_exists) {
+            const char *co_argv[] = {
+                "git", "-C", repo->root_path, "checkout", local_name, "--", NULL
+            };
+            res = tam_exec(co_argv, GIT_DEFAULT_TIMEOUT_MS);
+        } else {
+            const char *track_argv[] = {
+                "git", "-C", repo->root_path, "checkout", "--track",
+                branch_name, NULL
+            };
+            res = tam_exec(track_argv, GIT_DEFAULT_TIMEOUT_MS);
+        }
+    } else {
+        const char *co_argv[] = {
+            "git", "-C", repo->root_path, "checkout", branch_name, "--", NULL
+        };
+        res = tam_exec(co_argv, GIT_DEFAULT_TIMEOUT_MS);
+    }
+
+    int rc = (res.exit_code == 0) ? 0 : -1;
+    if (out_summary && sumcap > 0) {
+        if (rc == 0) {
+            snprintf(out_summary, sumcap, "%s: switched to branch '%s'",
+                     repo->name, target_display);
+        } else {
+            snprintf(out_summary, sumcap, "%s: checkout failed: %s",
+                     repo->name,
+                     (res.stderr_buf && *res.stderr_buf) ? res.stderr_buf : "error");
+            trim_first_line(out_summary);
+        }
+    }
+    tam_exec_result_free(&res);
+    knox_repo_refresh_status(repo);
+    return rc;
+}
+
+int knox_repo_create_branch(knox_repo_t *repo, const char *new_branch,
+                            const char *start_point,
+                            char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path || !new_branch || !*new_branch) {
+        if (out_summary && sumcap > 0)
+            snprintf(out_summary, sumcap, "New branch name cannot be empty");
+        return -1;
+    }
+
+    for (const char *p = new_branch; *p; p++) {
+        if (isspace((unsigned char)*p) || *p == '~' || *p == '^' ||
+            *p == ':' || *p == '?' || *p == '*' || *p == '[') {
+            if (out_summary && sumcap > 0)
+                snprintf(out_summary, sumcap, "Invalid character in branch name '%s'",
+                         new_branch);
+            return -1;
+        }
+    }
+
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "checkout", "-b", new_branch,
+        (start_point && *start_point) ? start_point : NULL,
+        NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    int rc = (res.exit_code == 0) ? 0 : -1;
+    if (out_summary && sumcap > 0) {
+        if (rc == 0) {
+            snprintf(out_summary, sumcap, "%s: created and checked out branch '%s'",
+                     repo->name, new_branch);
+        } else {
+            snprintf(out_summary, sumcap, "%s: create branch failed: %s",
+                     repo->name,
+                     (res.stderr_buf && *res.stderr_buf) ? res.stderr_buf : "error");
+            trim_first_line(out_summary);
+        }
+    }
+    tam_exec_result_free(&res);
+    knox_repo_refresh_status(repo);
+    return rc;
+}
+
+/* ========================================================================= */
+/* Stash List Management                                                     */
+/* ========================================================================= */
+
+void knox_stash_list_free(knox_stash_entry_t *list, size_t count)
+{
+    if (!list)
+        return;
+    for (size_t i = 0; i < count; i++) {
+        free(list[i].ref);
+        free(list[i].branch);
+        free(list[i].message);
+    }
+    free(list);
+}
+
+int knox_repo_list_stashes(const knox_repo_t *repo,
+                           knox_stash_entry_t **out_list,
+                           size_t *out_count)
+{
+    if (!out_list || !out_count)
+        return -1;
+    *out_list = NULL;
+    *out_count = 0;
+    if (!repo || !repo->root_path)
+        return -1;
+
+    const char *fmt = "--format=%gd" GIT_FIELD_SEP "%H" GIT_FIELD_SEP
+                      "%ct" GIT_FIELD_SEP "%gs";
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "-c", "log.showSignature=false",
+        "stash", "list", fmt, NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    if (res.exit_code != 0 || !res.stdout_buf) {
+        tam_exec_result_free(&res);
+        return -1;
+    }
+
+    size_t cap = 0;
+    size_t count = 0;
+    knox_stash_entry_t *list = NULL;
+
+    char *line = res.stdout_buf;
+    while (*line) {
+        char *nl = strchr(line, '\n');
+        if (nl)
+            *nl = '\0';
+
+        char *fields[4] = {0};
+        size_t nf = 0;
+        char *cur = line;
+        while (nf < 3) {
+            char *sep = strchr(cur, '\x1f');
+            if (!sep)
+                break;
+            *sep = '\0';
+            fields[nf++] = cur;
+            cur = sep + 1;
+        }
+        fields[nf++] = cur;
+
+        if (nf == 4 && fields[0][0] != '\0') {
+            if (count == cap) {
+                size_t next = cap ? cap * 2 : 8;
+                knox_stash_entry_t *grown = realloc(list, next * sizeof(*grown));
+                if (!grown)
+                    break;
+                list = grown;
+                cap = next;
+            }
+            knox_stash_entry_t *st = &list[count++];
+            *st = (knox_stash_entry_t){0};
+            st->ref = xstrdup(fields[0]);
+            snprintf(st->hash, sizeof(st->hash), "%.40s", fields[1]);
+            st->timestamp = strtoll(fields[2], NULL, 10);
+
+            const char *gs = fields[3];
+            /* Parse "WIP on <branch>: <msg>" or "On <branch>: <msg>" */
+            const char *on_ptr = NULL;
+            if (strncmp(gs, "WIP on ", 7) == 0)
+                on_ptr = gs + 7;
+            else if (strncmp(gs, "On ", 3) == 0)
+                on_ptr = gs + 3;
+
+            const char *colon = on_ptr ? strchr(on_ptr, ':') : NULL;
+            if (on_ptr && colon && colon > on_ptr) {
+                size_t blen = (size_t)(colon - on_ptr);
+                st->branch = malloc(blen + 1);
+                if (st->branch) {
+                    memcpy(st->branch, on_ptr, blen);
+                    st->branch[blen] = '\0';
+                }
+                const char *msg_start = colon + 1;
+                while (*msg_start == ' ')
+                    msg_start++;
+                st->message = xstrdup(*msg_start ? msg_start : gs);
+            } else {
+                st->branch = xstrdup(repo->branch ? repo->branch : "");
+                st->message = xstrdup(gs);
+            }
+        }
+
+        if (!nl)
+            break;
+        line = nl + 1;
+    }
+
+    tam_exec_result_free(&res);
+    *out_list = list;
+    *out_count = count;
+    return 0;
+}
+
+int knox_repo_stash_push(knox_repo_t *repo, const char *message,
+                         bool include_untracked,
+                         char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path)
+        return -1;
+    if (!repo->dirty) {
+        if (out_summary && sumcap > 0)
+            snprintf(out_summary, sumcap, "%s: no local changes to stash", repo->name);
+        return -1;
+    }
+
+    const char *argv[10];
+    size_t k = 0;
+    argv[k++] = "git";
+    argv[k++] = "-C";
+    argv[k++] = repo->root_path;
+    argv[k++] = "stash";
+    argv[k++] = "push";
+    if (include_untracked)
+        argv[k++] = "-u";
+    if (message && *message) {
+        argv[k++] = "-m";
+        argv[k++] = message;
+    }
+    argv[k] = NULL;
+
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    int rc = (res.exit_code == 0) ? 0 : -1;
+    if (out_summary && sumcap > 0) {
+        const char *msg = (res.stdout_buf && *res.stdout_buf) ? res.stdout_buf :
+                          (res.stderr_buf && *res.stderr_buf) ? res.stderr_buf :
+                          (rc == 0 ? "Saved working directory to stash" : "Stash push failed");
+        snprintf(out_summary, sumcap, "%s: %s", repo->name, msg);
+        trim_first_line(out_summary);
+    }
+    tam_exec_result_free(&res);
+    knox_repo_refresh_status(repo);
+    return rc;
+}
+
+int knox_repo_stash_apply(knox_repo_t *repo, const char *stash_ref,
+                          bool pop, char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path)
+        return -1;
+    const char *ref = (stash_ref && *stash_ref) ? stash_ref : "stash@{0}";
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "stash",
+        pop ? "pop" : "apply", ref, NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    int rc = (res.exit_code == 0) ? 0 : -1;
+    if (out_summary && sumcap > 0) {
+        if (rc == 0) {
+            snprintf(out_summary, sumcap, "%s: %s %s",
+                     repo->name, pop ? "popped" : "applied", ref);
+        } else {
+            snprintf(out_summary, sumcap, "%s: stash %s failed: %s",
+                     repo->name, pop ? "pop" : "apply",
+                     (res.stderr_buf && *res.stderr_buf) ? res.stderr_buf : "conflict");
+            trim_first_line(out_summary);
+        }
+    }
+    tam_exec_result_free(&res);
+    knox_repo_refresh_status(repo);
+    return rc;
+}
+
+int knox_repo_stash_drop(knox_repo_t *repo, const char *stash_ref,
+                         char *out_summary, size_t sumcap)
+{
+    if (!repo || !repo->root_path || !stash_ref || !*stash_ref)
+        return -1;
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "stash", "drop", stash_ref, NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    int rc = (res.exit_code == 0) ? 0 : -1;
+    if (out_summary && sumcap > 0) {
+        if (rc == 0) {
+            snprintf(out_summary, sumcap, "%s: dropped %s", repo->name, stash_ref);
+        } else {
+            snprintf(out_summary, sumcap, "%s: stash drop failed: %s",
+                     repo->name,
+                     (res.stderr_buf && *res.stderr_buf) ? res.stderr_buf : "error");
+            trim_first_line(out_summary);
+        }
+    }
+    tam_exec_result_free(&res);
+    return rc;
+}
+
+char *knox_repo_diff_stash(const knox_repo_t *repo, const char *stash_ref)
+{
+    if (!repo || !repo->root_path)
+        return NULL;
+    const char *ref = (stash_ref && *stash_ref) ? stash_ref : "stash@{0}";
+    const char *argv[] = {
+        "git", "-C", repo->root_path, "-c", "log.showSignature=false",
+        "--no-pager", "stash", "show", "--stat", "-p", "-u", ref, NULL
+    };
+    tam_exec_result_t res = tam_exec(argv, GIT_DEFAULT_TIMEOUT_MS);
+    char *out = (res.exit_code == 0 && res.stdout_buf && *res.stdout_buf)
+                ? xstrdup(res.stdout_buf)
+                : xstrdup("(No stash diff available)\n");
+    tam_exec_result_free(&res);
+    return out;
+}

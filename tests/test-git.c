@@ -97,6 +97,47 @@ int main(void)
     assert(det.files[0].deletions == 1);
     knox_commit_details_free(&det);
 
+    /* 7. Verify branch creation, listing, and checkout */
+    assert(knox_repo_create_branch(ra, "feature-x", NULL, sum, sizeof(sum)) == 0);
+    assert(strcmp(ra->branch, "feature-x") == 0);
+
+    knox_branch_info_t *branches = NULL;
+    size_t bcount = 0;
+    assert(knox_repo_list_branches(ra, &branches, &bcount) == 0);
+    assert(bcount >= 3); /* feature-x, dev, origin/dev */
+    assert(branches[0].is_current == true);
+    assert(strcmp(branches[0].name, "feature-x") == 0);
+    knox_branch_list_free(branches, bcount);
+
+    assert(knox_repo_checkout_branch(ra, "dev", false, sum, sizeof(sum)) == 0);
+    assert(strcmp(ra->branch, "dev") == 0);
+
+    /* 8. Verify stash push (including untracked notes.txt), list, diff, apply, and drop */
+    assert(ra->dirty == true);
+    assert(knox_repo_stash_push(ra, "WIP notes stash", true, sum, sizeof(sum)) == 0);
+    assert(ra->dirty == false);
+
+    knox_stash_entry_t *stashes = NULL;
+    size_t scount = 0;
+    assert(knox_repo_list_stashes(ra, &stashes, &scount) == 0);
+    assert(scount == 1);
+    assert(strcmp(stashes[0].ref, "stash@{0}") == 0);
+    assert(strstr(stashes[0].message, "WIP notes stash") != NULL);
+
+    char *sdiff = knox_repo_diff_stash(ra, "stash@{0}");
+    assert(sdiff != NULL);
+    assert(strstr(sdiff, "notes.txt") != NULL);
+    free(sdiff);
+
+    assert(knox_repo_stash_apply(ra, "stash@{0}", false, sum, sizeof(sum)) == 0);
+    assert(ra->dirty == true);
+    assert(knox_repo_stash_drop(ra, "stash@{0}", sum, sizeof(sum)) == 0);
+    knox_stash_list_free(stashes, scount);
+
+    assert(knox_repo_list_stashes(ra, &stashes, &scount) == 0);
+    assert(scount == 0);
+    knox_stash_list_free(stashes, scount);
+
     knox_workspace_free(&ws);
     free(notes_a);
     free(readme_a);

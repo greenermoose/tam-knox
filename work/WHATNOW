@@ -3,34 +3,40 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-25, with W1
+Updated: 2026-11-25, with W2
 
 STATE
 
-  Version 0.1.2 on branch dev. Initial multi-repository Git workbench
-  and file viewer is complete, with high-contrast 256-color selection
-  and header styling for tam-last, dynamic repo-name column sizing, and
-  g / Ctrl+G keybinding guidance toggle, and passes make test, make
-  sanitize, and idol-check (W1).
+  Version 0.2.0 on branch dev. Phases P1 (0.1.0-0.1.2) and P2 (0.2.0)
+  are complete and pass make test, make sanitize, and idol-check (W1,
+  W2).
 
-  Features working in 0.1.0:
+  Features working in 0.2.0:
   - Multi-repository Source Control sidebar (repository discovery,
     branch name, dirty/clean state, changed files list, ahead/behind
     count, path-scoped staging and committing, and remote sync with
     protected-branch confirmation for main and test).
+  - Interactive Branch Checkout and Creation modal (Alt+K or c): lists
+    and filters local and remote branches, checks out local or tracking
+    remote branches, and creates new branches from HEAD (Alt+N).
+  - Stash Management modal (Alt+Z or z): lists stashes, pushes working
+    and untracked changes with an optional message (n / s), views stash
+    diffs (Enter), applies (a), pops (p), and drops stashes with y/N
+    confirmation (d).
+  - Side-by-Side Split Diff mode (d, D, Alt+D, or R in Diff Viewer):
+    pairs deleted and added lines into aligned Old and New columns with
+    dual line-number gutters, synchronized scrolling, and search.
   - Git Graph commit history using the Vertex/Branch/determinePath lane
     layout algorithm from mhutchie.git-graph, with inline ref badges and
     a split Commit Details and Changed Files diff inspector.
   - Folder Explorer tree with live Git status badges.
   - File and Diff Viewer with C11 syntax coloring and tam-view Markdown,
     HTML, and Mermaid rendering, tabs, split panes, command palette, and
-    keybinding guidance.
+    keybinding guidance (g / Ctrl+G).
 
 NEXT
 
-  1. P2 (0.2.0): Interactive branch checkout / creation modal, stash
-     list management, and side-by-side diff split view.
-  2. P3 (0.3.0): File tree substring filter, multi-repo batch fetch, and
+  1. P3 (0.3.0): File tree substring filter, multi-repo batch fetch, and
      optional user keymap.ini configuration via libtam tam_ini.
 
 WAITING FOR FRED

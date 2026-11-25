@@ -17,7 +17,7 @@
 #include <time.h>
 
 #ifndef KNOX_VERSION
-#define KNOX_VERSION "0.1.2"
+#define KNOX_VERSION "0.2.0"
 #endif
 
 /* ========================================================================= */
@@ -113,6 +113,48 @@ char *knox_repo_diff_commit_file(const knox_repo_t *repo,
 char *knox_repo_show_commit_file(const knox_repo_t *repo,
                                  const char *commit_hash,
                                  const char *rel_path);
+
+/* Branch checkout & creation (src/git.c) */
+typedef struct {
+    char *name;          /* e.g. "dev" or "origin/feature" */
+    char *upstream;      /* e.g. "origin/dev" or NULL */
+    char  hash[41];      /* Short or full OID */
+    char *subject;       /* Tip commit subject */
+    bool  is_remote;     /* False = refs/heads, True = refs/remotes */
+    bool  is_current;    /* True if checked out HEAD */
+} knox_branch_info_t;
+
+int  knox_repo_list_branches(const knox_repo_t *repo,
+                             knox_branch_info_t **out_list,
+                             size_t *out_count);
+void knox_branch_list_free(knox_branch_info_t *list, size_t count);
+int  knox_repo_checkout_branch(knox_repo_t *repo, const char *branch_name,
+                               bool is_remote, char *out_summary, size_t sumcap);
+int  knox_repo_create_branch(knox_repo_t *repo, const char *new_branch,
+                             const char *start_point,
+                             char *out_summary, size_t sumcap);
+
+/* Stash list management (src/git.c) */
+typedef struct {
+    char   *ref;         /* e.g. "stash@{0}" */
+    char    hash[41];
+    char   *branch;      /* Parsed branch from stash subject if present */
+    char   *message;     /* Full stash summary */
+    int64_t timestamp;
+} knox_stash_entry_t;
+
+int  knox_repo_list_stashes(const knox_repo_t *repo,
+                            knox_stash_entry_t **out_list,
+                            size_t *out_count);
+void knox_stash_list_free(knox_stash_entry_t *list, size_t count);
+int  knox_repo_stash_push(knox_repo_t *repo, const char *message,
+                          bool include_untracked,
+                          char *out_summary, size_t sumcap);
+int  knox_repo_stash_apply(knox_repo_t *repo, const char *stash_ref,
+                           bool pop, char *out_summary, size_t sumcap);
+int  knox_repo_stash_drop(knox_repo_t *repo, const char *stash_ref,
+                          char *out_summary, size_t sumcap);
+char *knox_repo_diff_stash(const knox_repo_t *repo, const char *stash_ref);
 
 /* ========================================================================= */
 /* 2. Git Graph Data & mhutchie.git-graph Layout Engine (src/graph.c)        */
@@ -358,6 +400,25 @@ typedef enum {
     KNOX_DOC_DIFF
 } knox_doc_kind_t;
 
+typedef enum {
+    KNOX_SBS_CONTEXT = 0,
+    KNOX_SBS_HEADER,
+    KNOX_SBS_HUNK,
+    KNOX_SBS_CHANGE
+} knox_sbs_row_kind_t;
+
+typedef struct {
+    knox_sbs_row_kind_t kind;
+    int                 old_lineno; /* > 0, or 0 if empty/filler */
+    int                 new_lineno; /* > 0, or 0 if empty/filler */
+    size_t              old_off;    /* Byte offset in raw_text */
+    size_t              old_len;    /* Byte length (excluding leading -/+) */
+    bool                old_changed;
+    size_t              new_off;
+    size_t              new_len;
+    bool                new_changed;
+} knox_sbs_row_t;
+
 typedef struct {
     knox_doc_kind_t    kind;
     char              *title;         /* Tab title, e.g. "ROADMAP.md" */
@@ -380,6 +441,10 @@ typedef struct {
     size_t            *rend_lengths;
     size_t             rend_line_count;
     ssize_t            focused_link;
+    /* Side-by-Side Split Diff mode (for KNOX_DOC_DIFF) */
+    bool               side_by_side;
+    knox_sbs_row_t    *sbs_rows;
+    size_t             sbs_count;
     /* Viewport state */
     size_t             top_line;
     size_t             cursor_line;
@@ -398,6 +463,8 @@ int  knox_viewer_open_buffer(knox_viewer_doc_t *doc, knox_doc_kind_t kind,
 void knox_viewer_free(knox_viewer_doc_t *doc);
 int  knox_viewer_toggle_render(knox_viewer_doc_t *doc, int width, bool ascii);
 int  knox_viewer_ensure_rendered(knox_viewer_doc_t *doc, int width, bool ascii);
+int  knox_viewer_build_sbs(knox_viewer_doc_t *doc);
+int  knox_viewer_toggle_side_by_side(knox_viewer_doc_t *doc);
 bool knox_viewer_search(knox_viewer_doc_t *doc, const char *query,
                         bool forward, bool step);
 

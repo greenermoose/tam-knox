@@ -1,0 +1,49 @@
+W2 BRANCH MODAL, STASH MANAGEMENT, AND SIDE-BY-SIDE DIFF VIEW
+
+Date: 2026-11-25
+AI harness: agy 1.5.17
+AI model: gemini-4-argon-medium
+Commits: pending
+
+GUIDANCE
+
+  Fred: "/plan Do the next work slice for tam-knox"
+
+  Fred: "/plan Show me the plan in tam-view"
+
+  Fred: "Approved. Proceed."
+
+DONE
+
+  - Planned and reviewed Phase P2 (0.2.0) in tam-view via file-review.
+  - Implemented branch listing (git for-each-ref across refs/heads and
+    refs/remotes), local and tracking remote branch checkout, and new
+    branch creation in src/git.c.
+  - Implemented stash listing (git stash list), stash push with
+    untracked files (-u -m), stash diff inspection (git stash show -p),
+    stash apply/pop, and confirmed stash drop in src/git.c.
+  - Implemented the side-by-side diff parser (knox_viewer_build_sbs) and
+    mode toggle (knox_viewer_toggle_side_by_side) in src/viewer.c,
+    pairing consecutive deletion and addition blocks with aligned Old
+    and New line numbers and full search support.
+  - Added MODAL_BRANCH (Alt+K / c), MODAL_BRANCH_CREATE (Alt+N),
+    MODAL_STASH (Alt+Z / z), MODAL_STASH_PUSH (n / s),
+    MODAL_CONFIRM_STASH_DROP (d with y/N confirmation), and the
+    side-by-side split diff renderer (d / D / Alt+D / R) in
+    src/workbench.c.
+  - Wrote plans/P2-branch-stash-and-split-diff.md, updated ROADMAP.md,
+    README, arch/keys.md, arch/overview.md, and added unit and PTY tests
+    in tests/test-git.c, tests/test-syntax-render.c, and
+    tests/test-pty.c.
+  - Verified with make test, make sanitize (ASan + UBSan), and
+    idol-check, and installed tam-knox 0.2.0 to ~/.local/bin.
+
+FAILED
+
+  - Nothing.
+
+HANDOFF
+
+  - tam-knox 0.2.0 is built, tested, and installed to ~/.local/bin.
+    Next slice in WHATNOW is P3 (0.3.0): file tree substring filter,
+    multi-repo batch fetch, and user keymap.ini configuration.

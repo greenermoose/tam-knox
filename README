@@ -46,6 +46,9 @@ KEYS
   Alt+S                Sync focused repository with remote (fetch, pull
                        --ff-only, push; confirms before main or test)
   Alt+C                Open commit message prompt for staged files
+  c, Alt+K             Open Branch checkout & creation modal
+  z, Alt+Z             Open Stash list management modal
+  d, D, Alt+D          Toggle Side-by-Side Split Diff vs. Unified Diff
   Alt+E                Open current file in tam-edit ($VISUAL / $EDITOR)
   Alt+V, Alt+H         Split active main pane vertically or horizontally
   Alt+W                Cycle focus among split panes in active tab

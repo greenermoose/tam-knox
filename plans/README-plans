@@ -42,5 +42,8 @@ KEEPING PLANS CURRENT
 
 IN THIS REPOSITORY
 
-  P1-initial-workbench.md   0.1.0: multi-repo Source Control, Git Graph,
-                            Explorer, File/Diff Viewer, Tabs, and Splits
+  P1-initial-workbench.md          0.1.0-0.1.2: multi-repo Source Control,
+                                   Git Graph, Explorer, File/Diff Viewer,
+                                   Tabs, and Splits
+  P2-branch-stash-and-split-diff.md  0.2.0: interactive branch modal,
+                                   stash management, and side-by-side diff

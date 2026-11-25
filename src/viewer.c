@@ -128,7 +128,198 @@ void knox_viewer_free(knox_viewer_doc_t *doc)
     rbuf_free(&doc->rendered_buf);
     free(doc->rend_offsets);
     free(doc->rend_lengths);
+    free(doc->sbs_rows);
     *doc = (knox_viewer_doc_t){0};
+}
+
+static bool sbs_push_row(knox_sbs_row_t **rows, size_t *count, size_t *cap,
+                         knox_sbs_row_t row)
+{
+    if (*count == *cap) {
+        size_t next = *cap ? (*cap * 2) : 64;
+        knox_sbs_row_t *grown = realloc(*rows, next * sizeof(*grown));
+        if (!grown)
+            return false;
+        *rows = grown;
+        *cap = next;
+    }
+    (*rows)[(*count)++] = row;
+    return true;
+}
+
+static bool parse_hunk_header(const char *line, size_t len,
+                              int *out_old_start, int *out_new_start)
+{
+    if (len < 4 || line[0] != '@' || line[1] != '@')
+        return false;
+    char buf[128];
+    size_t clen = len < sizeof(buf) - 1 ? len : sizeof(buf) - 1;
+    memcpy(buf, line, clen);
+    buf[clen] = '\0';
+
+    const char *minus = strchr(buf + 2, '-');
+    const char *plus = minus ? strchr(minus, '+') : NULL;
+    if (!minus || !plus)
+        return false;
+    *out_old_start = atoi(minus + 1);
+    *out_new_start = atoi(plus + 1);
+    return true;
+}
+
+int knox_viewer_build_sbs(knox_viewer_doc_t *doc)
+{
+    if (!doc || doc->kind != KNOX_DOC_DIFF || !doc->raw_text)
+        return -1;
+    if (doc->sbs_rows && doc->sbs_count > 0)
+        return 0;
+
+    free(doc->sbs_rows);
+    doc->sbs_rows = NULL;
+    doc->sbs_count = 0;
+
+    size_t cap = 0;
+    int old_ln = 0;
+    int new_ln = 0;
+    bool in_hunk = false;
+
+    size_t i = 0;
+    while (i < doc->line_count) {
+        size_t off = doc->line_offsets[i];
+        size_t len = doc->line_lengths[i];
+        const char *line = doc->raw_text + off;
+
+        /* 1. Hunk header: @@ -old,cnt +new,cnt @@ */
+        int h_old = 0, h_new = 0;
+        if (parse_hunk_header(line, len, &h_old, &h_new)) {
+            old_ln = h_old;
+            new_ln = h_new;
+            in_hunk = true;
+            sbs_push_row(&doc->sbs_rows, &doc->sbs_count, &cap,
+                         (knox_sbs_row_t){
+                             .kind = KNOX_SBS_HUNK,
+                             .old_off = off,
+                             .old_len = len,
+                             .new_off = off,
+                             .new_len = len
+                         });
+            i++;
+            continue;
+        }
+
+        /* 2. File / commit headers before hunks or between files */
+        if (!in_hunk ||
+            (len >= 4 && (strncmp(line, "diff ", 5) == 0 ||
+                          strncmp(line, "--- ", 4) == 0 ||
+                          strncmp(line, "+++ ", 4) == 0 ||
+                          strncmp(line, "index ", 6) == 0))) {
+            if (len >= 5 && strncmp(line, "diff ", 5) == 0)
+                in_hunk = false;
+            sbs_push_row(&doc->sbs_rows, &doc->sbs_count, &cap,
+                         (knox_sbs_row_t){
+                             .kind = KNOX_SBS_HEADER,
+                             .old_off = off,
+                             .old_len = len,
+                             .new_off = off,
+                             .new_len = len
+                         });
+            i++;
+            continue;
+        }
+
+        /* 3. Paired deletion (-) and addition (+) block inside a hunk */
+        if (len > 0 && (line[0] == '-' || line[0] == '+')) {
+            size_t del_start = i;
+            while (i < doc->line_count) {
+                size_t lo = doc->line_offsets[i];
+                size_t ll = doc->line_lengths[i];
+                const char *lp = doc->raw_text + lo;
+                if (ll > 0 && lp[0] == '-' &&
+                    !(ll >= 4 && strncmp(lp, "--- ", 4) == 0))
+                    i++;
+                else
+                    break;
+            }
+            size_t del_end = i;
+
+            size_t add_start = i;
+            while (i < doc->line_count) {
+                size_t lo = doc->line_offsets[i];
+                size_t ll = doc->line_lengths[i];
+                const char *lp = doc->raw_text + lo;
+                if (ll > 0 && lp[0] == '+' &&
+                    !(ll >= 4 && strncmp(lp, "+++ ", 4) == 0))
+                    i++;
+                else
+                    break;
+            }
+            size_t add_end = i;
+
+            size_t del_cnt = del_end - del_start;
+            size_t add_cnt = add_end - add_start;
+            size_t pairs = del_cnt > add_cnt ? del_cnt : add_cnt;
+
+            for (size_t k = 0; k < pairs; k++) {
+                knox_sbs_row_t row = { .kind = KNOX_SBS_CHANGE };
+                if (k < del_cnt) {
+                    size_t d_idx = del_start + k;
+                    row.old_lineno = old_ln++;
+                    row.old_off = doc->line_offsets[d_idx] + 1;
+                    row.old_len = doc->line_lengths[d_idx] > 0
+                                  ? doc->line_lengths[d_idx] - 1 : 0;
+                    row.old_changed = true;
+                }
+                if (k < add_cnt) {
+                    size_t a_idx = add_start + k;
+                    row.new_lineno = new_ln++;
+                    row.new_off = doc->line_offsets[a_idx] + 1;
+                    row.new_len = doc->line_lengths[a_idx] > 0
+                                  ? doc->line_lengths[a_idx] - 1 : 0;
+                    row.new_changed = true;
+                }
+                sbs_push_row(&doc->sbs_rows, &doc->sbs_count, &cap, row);
+            }
+            continue;
+        }
+
+        /* 4. Unchanged context line inside a hunk (starts with ' ' or empty) */
+        if (len > 0 && line[0] == '\\') {
+            /* "\ No newline at end of file" */
+            i++;
+            continue;
+        }
+        size_t body_off = (len > 0 && line[0] == ' ') ? off + 1 : off;
+        size_t body_len = (len > 0 && line[0] == ' ') ? len - 1 : len;
+        sbs_push_row(&doc->sbs_rows, &doc->sbs_count, &cap,
+                     (knox_sbs_row_t){
+                         .kind = KNOX_SBS_CONTEXT,
+                         .old_lineno = old_ln++,
+                         .new_lineno = new_ln++,
+                         .old_off = body_off,
+                         .old_len = body_len,
+                         .new_off = body_off,
+                         .new_len = body_len
+                     });
+        i++;
+    }
+
+    return 0;
+}
+
+int knox_viewer_toggle_side_by_side(knox_viewer_doc_t *doc)
+{
+    if (!doc || doc->kind != KNOX_DOC_DIFF)
+        return -1;
+    if (!doc->side_by_side) {
+        if (knox_viewer_build_sbs(doc) != 0)
+            return -1;
+        doc->side_by_side = true;
+    } else {
+        doc->side_by_side = false;
+    }
+    doc->top_line = 0;
+    doc->cursor_line = 0;
+    doc->left_col = 0;
+    return 0;
 }
 
 int knox_viewer_ensure_rendered(knox_viewer_doc_t *doc, int width, bool ascii)
@@ -254,6 +445,8 @@ int knox_viewer_toggle_render(knox_viewer_doc_t *doc, int width, bool ascii)
 {
     if (!doc)
         return -1;
+    if (doc->kind == KNOX_DOC_DIFF)
+        return knox_viewer_toggle_side_by_side(doc);
     if (doc->markup_fmt == VIEW_FORMAT_RAW) {
         /* Allow forcing Markdown render on plain text files like README */
         doc->markup_fmt = VIEW_FORMAT_MARKDOWN;
@@ -282,6 +475,31 @@ bool knox_viewer_search(knox_viewer_doc_t *doc, const char *query,
     if (doc->search_query[0] == '\0')
         return false;
 
+    size_t qlen = strlen(doc->search_query);
+
+    if (doc->kind == KNOX_DOC_DIFF && doc->side_by_side &&
+        doc->sbs_rows && doc->sbs_count > 0 && doc->raw_text) {
+        size_t total = doc->sbs_count;
+        size_t start = doc->cursor_line < total ? doc->cursor_line : 0;
+        for (size_t k = (step ? 1 : 0); k <= total; k++) {
+            size_t idx = forward
+                         ? (start + k) % total
+                         : (start + total - (k % total)) % total;
+            const knox_sbs_row_t *r = &doc->sbs_rows[idx];
+            bool hit_old = (r->old_len >= qlen &&
+                            memmem(doc->raw_text + r->old_off, r->old_len,
+                                   doc->search_query, qlen) != NULL);
+            bool hit_new = (r->new_len >= qlen &&
+                            memmem(doc->raw_text + r->new_off, r->new_len,
+                                   doc->search_query, qlen) != NULL);
+            if (hit_old || hit_new) {
+                doc->cursor_line = idx;
+                return true;
+            }
+        }
+        return false;
+    }
+
     const char *text = doc->render_mode && doc->rendered_buf.data
                        ? doc->rendered_buf.data : doc->raw_text;
     const size_t *offs = doc->render_mode ? doc->rend_offsets : doc->line_offsets;
@@ -290,7 +508,6 @@ bool knox_viewer_search(knox_viewer_doc_t *doc, const char *query,
     if (!text || total == 0)
         return false;
 
-    size_t qlen = strlen(doc->search_query);
     size_t start = doc->cursor_line;
     if (start >= total)
         start = 0;

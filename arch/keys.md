@@ -49,6 +49,9 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `Alt+,` / `Alt+.` | `Alt+,` / `Alt+.` | `tab-prev` / `tab-next` | Switch to previous / next tab in the main workbench |
 | `Alt+S` | `Alt+S` | `repo-sync` | Sync focused repository with remote (`fetch`, `pull --ff-only`, `push`; confirms on `main`/`test`) |
 | `Alt+C` | `Alt+C` | `commit-prompt` | Open commit message prompt to commit staged files in active repository |
+| `c`, `Alt+K` | `c`, `Alt+K` | `branch-modal` | Open interactive Branch checkout & creation modal (`Alt+N` creates a new branch) |
+| `z`, `Alt+Z` | `z`, `Alt+Z` | `stash-modal` | Open interactive Stash management modal (`n` push, `Enter` diff, `a` apply, `p` pop, `d` drop) |
+| `d`, `D`, `Alt+D` | `d`, `D`, `Alt+D` | `toggle-diff-split` | Toggle Side-by-Side Split Diff vs. Unified Diff mode in Diff Viewer |
 | `Alt+E` | `Alt+E` | `open-in-editor` | Open current file at current line in `tam-edit` (`$VISUAL` / `$EDITOR`) |
 | `R` / `Alt+R` | `R` / `Alt+R` | `toggle-render-mode` | Toggle Rendered vs. Raw syntax-colored mode in File Viewer |
 | `B` / `Alt+F` | `B` / `Alt+F` | `cycle-branch-filter` | Toggle Git Graph between All Branches and Current Branch (`HEAD`) |
