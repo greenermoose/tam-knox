@@ -1,0 +1,85 @@
+TAM-KNOX - A MULTI-REPOSITORY GIT WORKBENCH AND FILE VIEWER
+
+tam-knox is a terminal multi-repository Git workbench and file viewer
+for Tamlinux. It discovers Git repositories inside a folder, shows
+their branch, dirty/clean state, changed files, and ahead/behind counts
+with one-key remote sync, draws a commit history graph with commit and
+diff inspection, provides a folder explorer with Git status badges, and
+views any file in raw syntax-colored mode or rendered Markdown, HTML,
+and Mermaid mode across tabs and split panes.
+
+Follows the tam-idol 1.1.0 standard.
+
+
+BUILD AND TRY
+
+  Needs a C11 compiler, Make, and libtam 0.9.1 or later.
+  LIBTAM_PREFIX defaults to $HOME/.local. The binary links libc and
+  the static libtam archive.
+
+    make
+    make test
+    make sanitize
+    build/tam-knox
+    build/tam-knox ~/Code/tamlinux
+    build/tam-knox --status ~/Code/tamlinux
+    build/tam-knox --graph .
+    build/tam-knox --ascii --no-color .
+
+  make install and make uninstall use PREFIX (default $HOME/.local).
+  DESTDIR lets a packager stage the files. make clean removes build/.
+
+
+KEYS
+
+  Tab, Shift+Tab       Cycle focus across Sidebar and Main Workbench panes
+  Up, Down, j, k       Move selection or scroll active view
+  PageUp, PageDown     Scroll page up or down (also Space / b in viewer)
+  Home, End            Jump to start or end of list or document
+  Enter                Select repo, expand folder, open file, or inspect
+                       commit details and changed files
+  Space                Stage or unstage file in Changes; page down in viewer
+  Alt+1                Switch left sidebar to Source Control (Repos/Changes)
+  Alt+2                Switch left sidebar to Explorer tree
+  Alt+3                Open or focus the Git Graph tab
+  Alt+B                Toggle left sidebar visibility
+  Alt+S                Sync focused repository with remote (fetch, pull
+                       --ff-only, push; confirms before main or test)
+  Alt+C                Open commit message prompt for staged files
+  Alt+E                Open current file in tam-edit ($VISUAL / $EDITOR)
+  Alt+V, Alt+H         Split active main pane vertically or horizontally
+  Alt+W                Cycle focus among split panes in active tab
+  Alt+, / Alt+.        Switch to previous or next workbench tab
+  R, Alt+R             Toggle Rendered vs. Raw syntax-colored file view
+  B, Alt+F             Cycle branch filter in Git Graph (All / HEAD)
+  Ctrl+F, /            Find in active repo list, commit graph, or file
+  n, N                 Next or previous search match
+  Ctrl+U               Update / refresh repositories, graph, and views
+  Ctrl+N               Open a new workbench tab
+  Ctrl+D               Close active split pane or tab
+  Ctrl+C               Copy selection, commit hash, or path (OSC 52)
+  Ctrl+E               Open command palette and one-handed chord composer
+  Ctrl+G               Toggle keybinding guidance overlay
+  Ctrl+Q, q            Quit tam-knox
+
+
+WHERE THINGS ARE
+
+  src/, include/   workbench TUI, Git engine, graph layout, explorer,
+                   syntax highlighter, and Markdown/HTML/Mermaid viewer
+  tests/           graph layout, Git operations, syntax, PTY, and CLI tests
+  arch/            how the workbench, graph algorithm, and keys work
+  ideas/           surveys of VS Code, Git Graph, Emacs Magit, Lazygit,
+                   Tig, and GitUI
+  plans/           milestone plans
+  bugs/, reviews/  numbered records
+  work/            WHATNOW and work session records
+  sandbox/         sample workspace and demo script
+  ROADMAP.md       versions and milestones
+  UPSTREAM.md      upstream code ledger
+  COPYRIGHT        copyright and license notices
+
+
+LICENSE
+
+  GNU General Public License, version 3 or later. See COPYRIGHT.

@@ -1,0 +1,65 @@
+W1 INITIAL MULTI-REPOSITORY GIT WORKBENCH AND FILE VIEWER
+
+Date: 2026-11-25
+AI harness: agy 1.5.17
+AI model: gemini-4-argon-medium
+Commits: initial
+
+GUIDANCE
+
+  Fred: "Create a tam-knox TUI app and git repo for it at
+  ~/Code/tamlinux/tam-knox. It will be a repo viewer to help me do the
+  following (which I'm currently doing in vscode): 1) Get a list of
+  repos in a folder and show their status: a) name of the repo, b)
+  current branch checked out, c) whether dirty or clean, d) if dirty,
+  the list of changed files, e) if not synced with remote, the number of
+  commits ahead or behind, and f) a way to sync local repo with remote
+  repo 2) Show a git graph so I can understand the commit history and
+  inspect each one for which files changed 3) An explorer view of the
+  folder. 4) A file viewer so I can see the current state of any file in
+  any repo. This should work in tam-last or a VT. The file viewer should
+  be able to show raw or rendered mode for Markdown and HTML files, and
+  it should have syntax coloring. You can probably use code from
+  tam-view for the file viewer. When you create the repo, in ideas/ put
+  the results of a comprehensive survey of other programs that have a
+  similar purpose, especially vscode. emacs might also be a useful
+  reference. Be sure to look at the source code for Git Graph to
+  understand how it shows git commit history. Make sure that split
+  screen or tabs in the TUI work reliably and deliver an exceptionally
+  excellent UI/UX with very intuitive and ergonomic keybindings.
+  Implement tam-knox in C11 with zero dependencies other than the system
+  C libraries and libtam."
+
+DONE
+
+  - Initialized tam-knox following the tam-idol 1.1.0 standard and wrote
+    the field survey in ideas/ covering VS Code, VS Code Git Graph
+    (mhutchie.git-graph source inspection), Emacs Magit/VC/Dired,
+    Lazygit, Tig, and GitUI, plus ideas/synthesis.md.
+  - Implemented multi-repository discovery, single-call porcelain v2
+    status parsing, path-scoped staging and committing, and remote sync
+    (fetch, pull --ff-only, push with main/test confirmation) in
+    src/git.c.
+  - Ported mhutchie.git-graph's Vertex/Branch/determinePath graph layout
+    algorithm to C11 and built a 2-column-per-lane Unicode/ASCII
+    terminal rasterizer in src/graph.c.
+  - Implemented the workspace Explorer tree with live Git status badges
+    in src/explorer.c, the zero-dependency C11 syntax lexer in
+    src/syntax.c, and the dual-mode Raw/Rendered Markdown, HTML, and
+    Mermaid viewer (reusing tam-view's rendering engine) in
+    src/viewer.c.
+  - Implemented the VS Code-style workbench TUI with toggleable sidebar,
+    tabs, recursive horizontal/vertical split panes, command palette,
+    and guidance overlay in src/pane.c and src/workbench.c.
+  - Verified with unit tests, interactive PTY tests, AddressSanitizer +
+    UndefinedBehaviorSanitizer (make sanitize), and idol-check.
+
+FAILED
+
+  - Nothing.
+
+HANDOFF
+
+  - tam-knox 0.1.0 is built, tested, and installed to ~/.local/bin.
+    Next steps in P2 are interactive branch checkout/creation and
+    side-by-side diff mode; see WHATNOW.

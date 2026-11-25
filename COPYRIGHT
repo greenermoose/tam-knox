@@ -1,0 +1,23 @@
+tam-knox copyright and license notices
+
+The portions of tam-knox written by a human are Copyright (C) 2026 Fred Horch.
+
+tam-knox is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See LICENSE for the full text.
+
+tam-knox is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.
+
+
+CODE TAKEN FROM OTHER PROJECTS
+
+tam-view (https://github.com/greenermoose/tam-view)
+  Copyright (C) 2026 Fred Horch.
+  License: GNU General Public License, version 3 or later (see LICENSE).
+  Covers the source buffer, text layout, and Markdown/HTML/Mermaid
+  rendering modules in include/view.h, include/render_internal.h,
+  src/source.c, src/layout.c, src/render.c, src/render_md.c,
+  src/render_html.c, and src/render_mermaid.c. See UPSTREAM.md.

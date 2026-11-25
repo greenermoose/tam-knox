@@ -1,0 +1,2413 @@
+#include "knox.h"
+#include "render_internal.h"
+
+#include <ctype.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+#define MAX_TABS 16
+
+typedef enum {
+    SIDEBAR_SOURCE_CONTROL = 0,
+    SIDEBAR_EXPLORER
+} sidebar_mode_t;
+
+typedef enum {
+    FOCUS_SIDEBAR_REPOS = 0,
+    FOCUS_SIDEBAR_CHANGES,
+    FOCUS_SIDEBAR_EXPLORER,
+    FOCUS_MAIN_PANE
+} focus_zone_t;
+
+typedef enum {
+    MODAL_NONE = 0,
+    MODAL_GUIDANCE,
+    MODAL_PALETTE,
+    MODAL_SEARCH,
+    MODAL_COMMIT,
+    MODAL_CONFIRM_SYNC
+} modal_kind_t;
+
+typedef struct {
+    const char *name;
+    const char *keys;
+    const char *desc;
+} knox_widget_cmd_t;
+
+static const knox_widget_cmd_t WIDGET_TABLE[] = {
+    { "view-source-control", "Alt+1",         "Switch left sidebar to Source Control (Repos + Changes)" },
+    { "view-explorer",       "Alt+2",         "Switch left sidebar to Folder Explorer tree" },
+    { "view-graph",          "Alt+3",         "Focus or open the Git Graph tab" },
+    { "toggle-sidebar",      "Alt+B",         "Show or hide the left sidebar" },
+    { "focus-next",          "Tab",           "Cycle focus across Sidebar and Main Workbench panes" },
+    { "focus-prev",          "Shift+Tab",     "Cycle focus backward" },
+    { "open-or-inspect",     "Enter",         "Select repo, expand folder, open file, or inspect commit" },
+    { "stage-or-page-down",  "Space",         "Stage/unstage file in Changes, or page down in viewer" },
+    { "repo-sync",           "Alt+S",         "Sync active repository with remote (fetch, pull --ff-only, push)" },
+    { "commit-prompt",       "Alt+C / Ctrl+S","Commit staged changes in active repository" },
+    { "open-in-editor",      "Alt+E",         "Open current file at current line in tam-edit" },
+    { "toggle-render-mode",  "R / Alt+R",     "Toggle Rendered (MD/HTML/Mermaid) vs. Raw Syntax view" },
+    { "cycle-branch-filter", "B / Alt+F",     "Toggle Git Graph between All Branches and HEAD" },
+    { "split-vertical",      "Alt+V",         "Split active main pane side-by-side (left / right)" },
+    { "split-horizontal",    "Alt+H",         "Split active main pane stacked (top / bottom)" },
+    { "focus-other-pane",    "Alt+W",         "Cycle focus among split panes in the active tab" },
+    { "tab-prev",            "Alt+,",         "Switch to previous workbench tab" },
+    { "tab-next",            "Alt+.",         "Switch to next workbench tab" },
+    { "new",                 "Ctrl+N",        "Open a new workbench tab" },
+    { "close",               "Ctrl+D",        "Close active split pane or workbench tab" },
+    { "find",                "Ctrl+F / /",    "Find in active repository list, commit graph, or file" },
+    { "find-next",           "n",             "Jump to next search match" },
+    { "find-prev",           "N",             "Jump to previous search match" },
+    { "update",              "Ctrl+U",        "Refresh repository statuses, commit graph, and explorer" },
+    { "copy",                "Ctrl+C",        "Copy selection, commit hash, or file path (OSC 52)" },
+    { "execute",             "Ctrl+E",        "Open Command Palette & One-Handed Chord Composer" },
+    { "guidance",            "Ctrl+G",        "Show keybinding guidance overlay" },
+    { "clear-screen",        "Ctrl+L",        "Clear and redraw terminal screen" },
+    { "quit",                "Ctrl+Q / q",    "Quit tam-knox" }
+};
+
+#define WIDGET_COUNT (sizeof(WIDGET_TABLE) / sizeof(WIDGET_TABLE[0]))
+
+typedef struct {
+    knox_options_t      opts;
+    tam_tty_t           tty;
+    tam_key_parser_t    keys;
+    knox_workspace_t    ws;
+    knox_explorer_t     explorer;
+    /* Per-repo cached graph and active commit details */
+    knox_graph_t        graph;
+    size_t              graph_repo_idx;
+    bool                graph_loaded;
+    knox_commit_details_t details;
+    char                details_hash[41];
+    size_t              details_repo_idx;
+    /* Sidebar state */
+    bool                sidebar_visible;
+    int                 sidebar_width;
+    sidebar_mode_t      sidebar_mode;
+    focus_zone_t        focus;
+    size_t              active_repo_idx;
+    size_t              repo_top;
+    size_t              change_cursor;
+    size_t              change_top;
+    size_t              explorer_cursor;
+    size_t              explorer_top;
+    /* Tabs & Split Panes */
+    knox_tab_t          tabs[MAX_TABS];
+    size_t              tab_count;
+    size_t              active_tab;
+    /* Modal & Prompt state */
+    modal_kind_t        modal;
+    char                prompt_buf[256];
+    size_t              prompt_len;
+    size_t              palette_cursor;
+    unsigned            chord_mods; /* Latched modifiers in Ctrl+E composer */
+    /* Status bar & clipboard */
+    char                status_msg[256];
+    char                clipboard[512];
+    bool                running;
+} knox_app_t;
+
+static volatile sig_atomic_t g_winch_flag = 0;
+
+static void sigwinch_handler(int sig)
+{
+    (void)sig;
+    g_winch_flag = 1;
+}
+
+/* ========================================================================= */
+/* Screen Line Buffer & UTF-8 Cell Clipping                                  */
+/* ========================================================================= */
+
+/* Write a string into `out` padded or clipped to exactly `target_cols`
+ * visible terminal cells, preserving embedded ANSI SGR sequences. */
+static size_t format_clipped_padded(char *out, size_t cap, const char *src,
+                                    int target_cols, bool pad_right)
+{
+    if (!out || cap == 0 || target_cols <= 0) {
+        if (out && cap > 0)
+            out[0] = '\0';
+        return 0;
+    }
+
+    size_t pos = 0;
+    int vis = 0;
+    const char *p = src ? src : "";
+    bool saw_esc = false;
+
+    while (*p && vis < target_cols) {
+        if (*p == '\033' && p[1] == '[') {
+            saw_esc = true;
+            const char *start = p;
+            p += 2;
+            while (*p && !((*p >= '@' && *p <= '~')))
+                p++;
+            if (*p)
+                p++;
+            size_t elen = (size_t)(p - start);
+            if (pos + elen + 8 < cap) {
+                memcpy(out + pos, start, elen);
+                pos += elen;
+            }
+            continue;
+        }
+        uint32_t cp = 0;
+        size_t clen = tam_utf8_decode(p, strlen(p), &cp);
+        if (clen == 0)
+            break;
+        if (cp < 0x20) {
+            p += clen;
+            continue;
+        }
+        int cw = tam_uni_width(cp);
+        if (cw < 0)
+            cw = 1;
+        if (vis + cw > target_cols)
+            break;
+        if (pos + clen + 8 < cap) {
+            memcpy(out + pos, p, clen);
+            pos += clen;
+            vis += cw;
+        }
+        p += clen;
+    }
+
+    if (saw_esc && pos + 5 < cap) {
+        memcpy(out + pos, "\033[0m", 4);
+        pos += 4;
+    }
+
+    if (pad_right) {
+        while (vis < target_cols && pos + 2 < cap) {
+            out[pos++] = ' ';
+            vis++;
+        }
+    }
+    out[pos] = '\0';
+    return pos;
+}
+
+static void frame_move_write(tam_str_t *frame, int row_1based, int col_1based,
+                             const char *text, int width, const char *bg_sgr,
+                             bool pad)
+{
+    char clipped[4096];
+    format_clipped_padded(clipped, sizeof(clipped), text, width, pad);
+    *frame = tam_str_cat_printf(*frame, "\033[%d;%dH%s%s%s",
+                                row_1based, col_1based,
+                                bg_sgr ? bg_sgr : "",
+                                clipped,
+                                (bg_sgr && *bg_sgr) ? "\033[0m" : "");
+}
+
+/* ========================================================================= */
+/* App Helpers: Graph Loading, Commit Details, Tabs, Clipboard               */
+/* ========================================================================= */
+
+static void app_set_status(knox_app_t *app, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(app->status_msg, sizeof(app->status_msg), fmt, ap);
+    va_end(ap);
+}
+
+static void app_copy_to_clipboard(knox_app_t *app, const char *text)
+{
+    if (!text || !*text)
+        return;
+    snprintf(app->clipboard, sizeof(app->clipboard), "%s", text);
+
+    /* OSC 52 write when not on TERM=linux */
+    if (!app->opts.linux_vt && app->tty.interactive) {
+        static const char B64[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        size_t len = strlen(text);
+        tam_str_t osc = tam_str_new("\033]52;c;");
+        for (size_t i = 0; i < len; i += 3) {
+            uint32_t v = ((uint32_t)(unsigned char)text[i]) << 16;
+            if (i + 1 < len) v |= ((uint32_t)(unsigned char)text[i + 1]) << 8;
+            if (i + 2 < len) v |= ((uint32_t)(unsigned char)text[i + 2]);
+            char quad[5];
+            quad[0] = B64[(v >> 18) & 0x3F];
+            quad[1] = B64[(v >> 12) & 0x3F];
+            quad[2] = (i + 1 < len) ? B64[(v >> 6) & 0x3F] : '=';
+            quad[3] = (i + 2 < len) ? B64[v & 0x3F] : '=';
+            quad[4] = '\0';
+            osc = tam_str_cat(osc, quad);
+        }
+        osc = tam_str_cat(osc, "\033\\");
+        tam_tty_write(&app->tty, osc, tam_str_len(osc));
+        tam_str_free(osc);
+    }
+    app_set_status(app, "Copied to clipboard: %s", text);
+}
+
+static void app_ensure_repo_graph(knox_app_t *app, size_t repo_idx,
+                                  bool all_branches, bool show_remotes,
+                                  bool force_reload)
+{
+    if (app->ws.count == 0 || repo_idx >= app->ws.count)
+        return;
+    if (!force_reload && app->graph_loaded && app->graph_repo_idx == repo_idx)
+        return;
+
+    knox_repo_load_graph(&app->ws.repos[repo_idx], &app->graph, 250,
+                         all_branches, show_remotes, app->opts.ascii);
+    app->graph_repo_idx = repo_idx;
+    app->graph_loaded = true;
+}
+
+static void app_ensure_commit_details(knox_app_t *app, size_t repo_idx,
+                                      size_t commit_idx)
+{
+    if (repo_idx >= app->ws.count)
+        return;
+    app_ensure_repo_graph(app, repo_idx, true, true, false);
+    if (commit_idx >= app->graph.commit_count)
+        return;
+    const char *hash = app->graph.commits[commit_idx].hash;
+    if (app->details_repo_idx == repo_idx &&
+        strcmp(app->details_hash, hash) == 0 &&
+        app->details.author != NULL)
+        return;
+
+    knox_commit_details_free(&app->details);
+    knox_repo_load_commit_details(&app->ws.repos[repo_idx], hash, &app->details);
+    snprintf(app->details_hash, sizeof(app->details_hash), "%s", hash);
+    app->details_repo_idx = repo_idx;
+}
+
+static knox_tab_t *app_current_tab(knox_app_t *app)
+{
+    if (app->tab_count == 0)
+        return NULL;
+    if (app->active_tab >= app->tab_count)
+        app->active_tab = app->tab_count - 1;
+    return &app->tabs[app->active_tab];
+}
+
+static knox_pane_t *app_active_pane(knox_app_t *app)
+{
+    knox_tab_t *tab = app_current_tab(app);
+    return tab ? tab->active_pane : NULL;
+}
+
+static knox_tab_t *app_add_tab(knox_app_t *app, const char *title,
+                               knox_pane_t *initial_pane)
+{
+    if (app->tab_count >= MAX_TABS) {
+        /* Reuse last tab if full */
+        knox_tab_t *last = &app->tabs[MAX_TABS - 1];
+        knox_split_free_tree(last->root);
+        snprintf(last->title, sizeof(last->title), "%s", title);
+        last->root = knox_split_create_leaf(initial_pane);
+        last->active_pane = initial_pane;
+        app->active_tab = MAX_TABS - 1;
+        return last;
+    }
+    knox_tab_t *t = &app->tabs[app->tab_count];
+    snprintf(t->title, sizeof(t->title), "%s", title);
+    t->root = knox_split_create_leaf(initial_pane);
+    t->active_pane = initial_pane;
+    app->active_tab = app->tab_count++;
+    return t;
+}
+
+static void app_open_file_in_tab(knox_app_t *app, const char *abs_path)
+{
+    if (!abs_path)
+        return;
+    knox_repo_t *repo = knox_workspace_find_repo_for_path(&app->ws, abs_path);
+    const char *repo_name = repo ? repo->name : NULL;
+
+    /* Check if file is already open in a tab */
+    for (size_t i = 0; i < app->tab_count; i++) {
+        knox_pane_t *p = app->tabs[i].active_pane;
+        if (p && p->content == KNOX_PANE_VIEWER &&
+            p->doc.abs_path && strcmp(p->doc.abs_path, abs_path) == 0) {
+            app->active_tab = i;
+            app->focus = FOCUS_MAIN_PANE;
+            return;
+        }
+    }
+
+    /* Check dirty badge for tab title */
+    char badge = ' ';
+    if (repo) {
+        size_t rlen = strlen(repo->root_path);
+        if (strncmp(abs_path, repo->root_path, rlen) == 0 &&
+            abs_path[rlen] == '/') {
+            const char *rel = abs_path + rlen + 1;
+            for (size_t c = 0; c < repo->change_count; c++) {
+                if (strcmp(repo->changes[c].path, rel) == 0) {
+                    badge = (char)((repo->changes[c].worktree_status != KNOX_CHANGE_NONE)
+                                   ? repo->changes[c].worktree_status
+                                   : repo->changes[c].index_status);
+                    break;
+                }
+            }
+        }
+    }
+
+    const char *base = strrchr(abs_path, '/');
+    base = (base && base[1]) ? base + 1 : abs_path;
+    char tab_title[64];
+    if (repo_name && badge != ' ')
+        snprintf(tab_title, sizeof(tab_title), "%s %s %c", base, repo_name, badge);
+    else if (repo_name)
+        snprintf(tab_title, sizeof(tab_title), "%s %s", base, repo_name);
+    else
+        snprintf(tab_title, sizeof(tab_title), "%s", base);
+
+    knox_pane_t *pane = knox_pane_new(KNOX_PANE_VIEWER, app->active_repo_idx);
+    if (!pane)
+        return;
+    int render_w = app->tty.cols - (app->sidebar_visible ? app->sidebar_width + 1 : 0) - 4;
+    if (render_w < 40)
+        render_w = 72;
+    if (knox_viewer_open_file(&pane->doc, abs_path, repo_name, true,
+                              render_w, app->opts.ascii) != 0) {
+        knox_pane_free(pane);
+        app_set_status(app, "Unable to read file: %s", abs_path);
+        return;
+    }
+
+    app_add_tab(app, tab_title, pane);
+    app->focus = FOCUS_MAIN_PANE;
+    app_set_status(app, "Opened %s (%s)", tab_title,
+                   pane->doc.render_mode ? "Rendered" :
+                   knox_syntax_lang_name(pane->doc.lang));
+}
+
+static void app_open_diff_in_pane_or_tab(knox_app_t *app, const char *title,
+                                         const char *repo_name,
+                                         const char *breadcrumb,
+                                         char *diff_text)
+{
+    if (!diff_text)
+        return;
+
+    /* If active tab has a viewer split pane already, reuse it; otherwise open tab */
+    knox_tab_t *tab = app_current_tab(app);
+    if (tab && tab->active_pane && tab->active_pane->content == KNOX_PANE_VIEWER &&
+        tab->active_pane->doc.kind == KNOX_DOC_DIFF) {
+        snprintf(tab->title, sizeof(tab->title), "%s", title);
+        knox_viewer_open_buffer(&tab->active_pane->doc, KNOX_DOC_DIFF,
+                                title, repo_name, breadcrumb,
+                                diff_text, strlen(diff_text), KNOX_LANG_DIFF);
+        free(diff_text);
+        app->focus = FOCUS_MAIN_PANE;
+        return;
+    }
+
+    knox_pane_t *pane = knox_pane_new(KNOX_PANE_VIEWER, app->active_repo_idx);
+    if (!pane) {
+        free(diff_text);
+        return;
+    }
+    knox_viewer_open_buffer(&pane->doc, KNOX_DOC_DIFF,
+                            title, repo_name, breadcrumb,
+                            diff_text, strlen(diff_text), KNOX_LANG_DIFF);
+    free(diff_text);
+    app_add_tab(app, title, pane);
+    app->focus = FOCUS_MAIN_PANE;
+}
+
+static void app_inspect_commit_in_split(knox_app_t *app, knox_pane_t *graph_pane)
+{
+    knox_tab_t *tab = app_current_tab(app);
+    if (!tab || !graph_pane)
+        return;
+
+    app_ensure_commit_details(app, graph_pane->repo_idx, graph_pane->graph_cursor);
+
+    /* Find if a KNOX_PANE_COMMIT_DETAIL pane already exists in this tab */
+    knox_pane_t *cur = graph_pane;
+    size_t nleaves = knox_split_count_leaves(tab->root);
+    for (size_t i = 0; i < nleaves; i++) {
+        cur = knox_split_next_pane(tab->root, cur);
+        if (cur && cur->content == KNOX_PANE_COMMIT_DETAIL) {
+            cur->repo_idx = graph_pane->repo_idx;
+            cur->inspect_commit_idx = graph_pane->graph_cursor;
+            cur->inspect_file_cursor = 0;
+            cur->inspect_file_top = 0;
+            tab->active_pane = cur;
+            app->focus = FOCUS_MAIN_PANE;
+            return;
+        }
+    }
+
+    /* Otherwise split the graph pane horizontally (top = graph, bottom = details) */
+    knox_split_node_t *leaf = knox_split_find_pane(tab->root, graph_pane);
+    if (!leaf)
+        return;
+    knox_pane_t *detail_pane = knox_pane_new(KNOX_PANE_COMMIT_DETAIL,
+                                             graph_pane->repo_idx);
+    if (!detail_pane)
+        return;
+    detail_pane->inspect_commit_idx = graph_pane->graph_cursor;
+    if (knox_split_pane(leaf, KNOX_NODE_SPLIT_H, detail_pane)) {
+        leaf->ratio = 0.55f;
+        tab->active_pane = detail_pane;
+        app->focus = FOCUS_MAIN_PANE;
+    } else {
+        knox_pane_free(detail_pane);
+    }
+}
+
+static void app_open_in_external_editor(knox_app_t *app)
+{
+    const char *path = NULL;
+    size_t line_1based = 1;
+
+    knox_pane_t *ap = app_active_pane(app);
+    if (app->focus == FOCUS_MAIN_PANE && ap &&
+        ap->content == KNOX_PANE_VIEWER && ap->doc.abs_path) {
+        path = ap->doc.abs_path;
+        line_1based = ap->doc.cursor_line + 1;
+    } else if (app->focus == FOCUS_SIDEBAR_EXPLORER &&
+               app->explorer_cursor < app->explorer.flat_count) {
+        knox_tree_node_t *n = app->explorer.flat[app->explorer_cursor];
+        if (!n->is_dir)
+            path = n->abs_path;
+    } else if (app->focus == FOCUS_SIDEBAR_CHANGES &&
+               app->active_repo_idx < app->ws.count) {
+        knox_repo_t *r = &app->ws.repos[app->active_repo_idx];
+        if (app->change_cursor < r->change_count) {
+            static char joined_buf[4096];
+            snprintf(joined_buf, sizeof(joined_buf), "%s/%s",
+                     r->root_path, r->changes[app->change_cursor].path);
+            path = joined_buf;
+        }
+    }
+
+    if (!path) {
+        app_set_status(app, "Select a file in Viewer, Explorer, or Changes to open in tam-edit");
+        return;
+    }
+
+    const char *editor = getenv("VISUAL");
+    if (!editor || !*editor)
+        editor = getenv("EDITOR");
+    if (!editor || !*editor)
+        editor = "tam-edit";
+
+    char line_arg[32];
+    snprintf(line_arg, sizeof(line_arg), "+%zu", line_1based);
+
+    /* Temporarily restore cooked terminal mode while running editor */
+    tam_tty_mouse(&app->tty, false);
+    tam_tty_paste(&app->tty, false);
+    tam_tty_cursor_visible(&app->tty, true);
+    tam_tty_alt_screen(&app->tty, false);
+    tam_tty_raw(&app->tty, false);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        execlp(editor, editor, line_arg, path, (char *)NULL);
+        execlp("tam-edit", "tam-edit", path, (char *)NULL);
+        _exit(127);
+    } else if (pid > 0) {
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+            ;
+    }
+
+    tam_tty_raw(&app->tty, true);
+    tam_tty_alt_screen(&app->tty, true);
+    tam_tty_cursor_visible(&app->tty, false);
+    tam_tty_paste(&app->tty, true);
+
+    /* Refresh repo status and open file buffer after edit */
+    if (app->active_repo_idx < app->ws.count)
+        knox_repo_refresh_status(&app->ws.repos[app->active_repo_idx]);
+    knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+    if (ap && ap->content == KNOX_PANE_VIEWER && ap->doc.abs_path &&
+        strcmp(ap->doc.abs_path, path) == 0) {
+        size_t saved_line = ap->doc.cursor_line;
+        size_t saved_top = ap->doc.top_line;
+        char *p_dup = strdup(path);
+        char *r_dup = ap->doc.repo_name ? strdup(ap->doc.repo_name) : NULL;
+        bool was_render = ap->doc.render_mode;
+        if (p_dup) {
+            knox_viewer_open_file(&ap->doc, p_dup, r_dup, was_render,
+                                  ap->w > 4 ? ap->w - 2 : 72, app->opts.ascii);
+            ap->doc.cursor_line = saved_line;
+            ap->doc.top_line = saved_top;
+        }
+        free(p_dup);
+        free(r_dup);
+    }
+    app_set_status(app, "Returned from %s", editor);
+}
+
+/* ========================================================================= */
+/* Rendering: Top Bar, Sidebar, Panes, Modals, and Footer                    */
+/* ========================================================================= */
+
+static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
+{
+    const char *ws_base = strrchr(app->ws.root_path, '/');
+    ws_base = (ws_base && ws_base[1]) ? ws_base + 1 : app->ws.root_path;
+
+    tam_str_t bar = tam_str_new("");
+    if (app->opts.color) {
+        bar = tam_str_cat_printf(bar,
+            " \033[1;36mtam-knox\033[0m\033[48;5;236m \033[1m%s\033[0m\033[48;5;236m (%zu repos) ",
+            ws_base, app->ws.count);
+        bar = tam_str_cat_printf(bar,
+            "%s[Alt+1 Source Control]\033[0m\033[48;5;236m %s[Alt+2 Explorer]\033[0m\033[48;5;236m | ",
+            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) ? "\033[1;33m" : "\033[90m",
+            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER) ? "\033[1;33m" : "\033[90m");
+    } else {
+        bar = tam_str_cat_printf(bar, " tam-knox %s (%zu repos) [%s] | ",
+            ws_base, app->ws.count,
+            app->sidebar_mode == SIDEBAR_SOURCE_CONTROL ? "1:Source Control" : "2:Explorer");
+    }
+
+    for (size_t i = 0; i < app->tab_count; i++) {
+        bool act = (i == app->active_tab);
+        if (app->opts.color) {
+            bar = tam_str_cat_printf(bar, "%s %zu:%s \033[0m\033[48;5;236m ",
+                act ? "\033[1;30;46m" : "\033[37;48;5;238m",
+                i + 1, app->tabs[i].title);
+        } else {
+            bar = tam_str_cat_printf(bar, "%s%zu:%s%s ",
+                act ? "[" : " ", i + 1, app->tabs[i].title, act ? "]" : " ");
+        }
+    }
+
+    const char *bg = (app->opts.color && !app->opts.linux_vt) ? "\033[48;5;236m" : "\033[7m";
+    frame_move_write(frame, 1, 1, bar, cols, app->opts.color ? bg : "", true);
+    tam_str_free(bar);
+}
+
+static void render_sidebar(knox_app_t *app, tam_str_t *frame,
+                           int x, int y, int w, int h)
+{
+    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+
+    if (app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) {
+        int repos_h = (h * 55) / 100;
+        if (repos_h < 4)
+            repos_h = h / 2;
+        int changes_h = h - repos_h;
+
+        /* 1. Repositories Header */
+        bool focus_repos = (app->focus == FOCUS_SIDEBAR_REPOS);
+        char hdr[256];
+        snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [Alt+S Sync]",
+                 bx->arrow_d, app->ws.count);
+        const char *hdr_sgr = app->opts.color
+                              ? (focus_repos ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                              : (focus_repos ? "\033[7m" : "");
+        frame_move_write(frame, y, x, hdr, w, hdr_sgr, true);
+
+        /* Repositories rows */
+        int list_rows = repos_h - 1;
+        if (list_rows > 0) {
+            if (app->active_repo_idx < app->repo_top)
+                app->repo_top = app->active_repo_idx;
+            if (app->active_repo_idx >= app->repo_top + (size_t)list_rows)
+                app->repo_top = app->active_repo_idx - (size_t)list_rows + 1;
+
+            for (int r = 0; r < list_rows; r++) {
+                size_t idx = app->repo_top + (size_t)r;
+                int row_y = y + 1 + r;
+                if (idx >= app->ws.count) {
+                    frame_move_write(frame, row_y, x, "", w, "", true);
+                    continue;
+                }
+                const knox_repo_t *repo = &app->ws.repos[idx];
+                bool sel = (idx == app->active_repo_idx);
+
+                char sync_badge[64] = "";
+                if (repo->ahead > 0 || repo->behind > 0) {
+                    snprintf(sync_badge, sizeof(sync_badge), " %s%d %s%d",
+                             app->opts.ascii ? "^" : "\xe2\x86\x91", repo->ahead,
+                             app->opts.ascii ? "v" : "\xe2\x86\x93", repo->behind);
+                }
+
+                char dirty_badge[32] = "";
+                if (repo->dirty)
+                    snprintf(dirty_badge, sizeof(dirty_badge), "* (%zu)", repo->change_count);
+
+                char line[512];
+                if (app->opts.color && !sel) {
+                    snprintf(line, sizeof(line),
+                             " %-16.16s \033[36m%s\033[0m\033[33m%s\033[0m\033[35m%s\033[0m",
+                             repo->name, repo->branch ? repo->branch : "?",
+                             dirty_badge, sync_badge);
+                } else {
+                    snprintf(line, sizeof(line), " %-16.16s %s%s%s",
+                             repo->name, repo->branch ? repo->branch : "?",
+                             dirty_badge, sync_badge);
+                }
+
+                const char *row_bg = "";
+                if (sel) {
+                    row_bg = app->opts.color
+                             ? (focus_repos ? "\033[1;37;44m" : "\033[48;5;238m")
+                             : "\033[7m";
+                }
+                frame_move_write(frame, row_y, x, line, w, row_bg, true);
+            }
+        }
+
+        /* 2. Changes Header */
+        int cy = y + repos_h;
+        bool focus_chg = (app->focus == FOCUS_SIDEBAR_CHANGES);
+        const knox_repo_t *act_repo = (app->active_repo_idx < app->ws.count)
+                                      ? &app->ws.repos[app->active_repo_idx]
+                                      : NULL;
+        snprintf(hdr, sizeof(hdr), " %s CHANGES: %s (%zu) [Space Stage, Alt+C]",
+                 bx->arrow_d,
+                 act_repo ? act_repo->name : "-",
+                 act_repo ? act_repo->change_count : 0);
+        const char *chdr_sgr = app->opts.color
+                               ? (focus_chg ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                               : (focus_chg ? "\033[7m" : "");
+        frame_move_write(frame, cy, x, hdr, w, chdr_sgr, true);
+
+        int chg_rows = changes_h - 1;
+        if (chg_rows > 0) {
+            size_t ccount = act_repo ? act_repo->change_count : 0;
+            if (app->change_cursor >= ccount && ccount > 0)
+                app->change_cursor = ccount - 1;
+            if (app->change_cursor < app->change_top)
+                app->change_top = app->change_cursor;
+            if (app->change_cursor >= app->change_top + (size_t)chg_rows)
+                app->change_top = app->change_cursor - (size_t)chg_rows + 1;
+
+            for (int r = 0; r < chg_rows; r++) {
+                size_t idx = app->change_top + (size_t)r;
+                int row_y = cy + 1 + r;
+                if (!act_repo || idx >= ccount) {
+                    if (r == 0 && ccount == 0) {
+                        frame_move_write(frame, row_y, x,
+                                         "   (working tree clean)", w,
+                                         app->opts.color ? "\033[90m" : "", true);
+                    } else {
+                        frame_move_write(frame, row_y, x, "", w, "", true);
+                    }
+                    continue;
+                }
+                const knox_file_change_t *fc = &act_repo->changes[idx];
+                bool sel = (idx == app->change_cursor);
+                char st_let = (char)((fc->worktree_status != KNOX_CHANGE_NONE)
+                                     ? fc->worktree_status
+                                     : fc->index_status);
+                const char *box = fc->staged ? "[+]" : "[ ]";
+                char line[512];
+                if (app->opts.color && !sel) {
+                    const char *sc = (st_let == 'M') ? "\033[33m" :
+                                     (st_let == 'A') ? "\033[32m" :
+                                     (st_let == 'D') ? "\033[31m" : "\033[36m";
+                    snprintf(line, sizeof(line), " %s %s%c\033[0m %s",
+                             box, sc, st_let, fc->path);
+                } else {
+                    snprintf(line, sizeof(line), " %s %c %s",
+                             box, st_let, fc->path);
+                }
+                const char *row_bg = "";
+                if (sel) {
+                    row_bg = app->opts.color
+                             ? (focus_chg ? "\033[1;37;44m" : "\033[48;5;238m")
+                             : "\033[7m";
+                }
+                frame_move_write(frame, row_y, x, line, w, row_bg, true);
+            }
+        }
+    } else {
+        /* SIDEBAR_EXPLORER */
+        bool focus_exp = (app->focus == FOCUS_SIDEBAR_EXPLORER);
+        char hdr[256];
+        snprintf(hdr, sizeof(hdr), " %s EXPLORER (%zu items)",
+                 bx->arrow_d, app->explorer.flat_count);
+        const char *hdr_sgr = app->opts.color
+                              ? (focus_exp ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                              : (focus_exp ? "\033[7m" : "");
+        frame_move_write(frame, y, x, hdr, w, hdr_sgr, true);
+
+        int rows = h - 1;
+        if (rows > 0) {
+            if (app->explorer_cursor >= app->explorer.flat_count &&
+                app->explorer.flat_count > 0)
+                app->explorer_cursor = app->explorer.flat_count - 1;
+            if (app->explorer_cursor < app->explorer_top)
+                app->explorer_top = app->explorer_cursor;
+            if (app->explorer_cursor >= app->explorer_top + (size_t)rows)
+                app->explorer_top = app->explorer_cursor - (size_t)rows + 1;
+
+            for (int r = 0; r < rows; r++) {
+                size_t idx = app->explorer_top + (size_t)r;
+                int row_y = y + 1 + r;
+                if (idx >= app->explorer.flat_count) {
+                    frame_move_write(frame, row_y, x, "", w, "", true);
+                    continue;
+                }
+                const knox_tree_node_t *n = app->explorer.flat[idx];
+                bool sel = (idx == app->explorer_cursor);
+
+                char indent[64] = "";
+                int ind_spaces = n->depth * 2;
+                if (ind_spaces > 32)
+                    ind_spaces = 32;
+                memset(indent, ' ', (size_t)ind_spaces);
+                indent[ind_spaces] = '\0';
+
+                const char *marker = "  ";
+                if (n->is_dir) {
+                    marker = n->expanded
+                             ? (app->opts.ascii ? "v " : "\xe2\x96\xbe ")
+                             : (app->opts.ascii ? "> " : "\xe2\x96\xb8 ");
+                }
+
+                char status_tail[32] = "";
+                if (!n->is_dir && n->git_status != KNOX_CHANGE_NONE) {
+                    snprintf(status_tail, sizeof(status_tail), " [%c]",
+                             (char)n->git_status);
+                } else if (n->is_dir && n->has_dirty_desc) {
+                    snprintf(status_tail, sizeof(status_tail), " %s",
+                             app->opts.ascii ? "*" : "\xe2\x97\x8f");
+                }
+
+                char line[512];
+                if (app->opts.color && !sel) {
+                    const char *nc = n->is_dir ? "\033[1;34m" : "";
+                    const char *tc = (n->git_status != KNOX_CHANGE_NONE || n->has_dirty_desc)
+                                     ? "\033[33m" : "";
+                    snprintf(line, sizeof(line), " %s%s%s%s%s\033[0m%s%s\033[0m",
+                             indent, marker, nc, n->name,
+                             n->is_dir ? "/" : "", tc, status_tail);
+                } else {
+                    snprintf(line, sizeof(line), " %s%s%s%s%s",
+                             indent, marker, n->name,
+                             n->is_dir ? "/" : "", status_tail);
+                }
+
+                const char *row_bg = "";
+                if (sel) {
+                    row_bg = app->opts.color
+                             ? (focus_exp ? "\033[1;37;44m" : "\033[48;5;238m")
+                             : "\033[7m";
+                }
+                frame_move_write(frame, row_y, x, line, w, row_bg, true);
+            }
+        }
+    }
+}
+
+static void format_commit_date(int64_t ts, char *out, size_t cap)
+{
+    if (ts <= 0) {
+        snprintf(out, cap, "-");
+        return;
+    }
+    time_t t = (time_t)ts;
+    struct tm tm_val;
+    if (!localtime_r(&t, &tm_val)) {
+        snprintf(out, cap, "-");
+        return;
+    }
+    strftime(out, cap, "%d %b %Y %H:%M", &tm_val);
+}
+
+static void render_graph_pane(knox_app_t *app, knox_pane_t *p,
+                              tam_str_t *frame, bool is_focused)
+{
+    if (app->ws.count == 0) {
+        frame_move_write(frame, p->y, p->x,
+                         " No Git repositories found in workspace.",
+                         p->w, "", true);
+        return;
+    }
+    if (p->repo_idx >= app->ws.count)
+        p->repo_idx = app->active_repo_idx;
+
+    app_ensure_repo_graph(app, p->repo_idx, p->graph_all_branches,
+                          p->graph_show_remotes, false);
+    const knox_repo_t *repo = &app->ws.repos[p->repo_idx];
+
+    /* 1. Control Header (Repo, Branch Filter, Remotes, Count) */
+    char ctrl[512];
+    snprintf(ctrl, sizeof(ctrl),
+             " Git Graph | Repo: %s (%s) | Branches: %s [B] | Commits: %zu [Enter: Inspect]",
+             repo->name, repo->branch ? repo->branch : "?",
+             p->graph_all_branches ? "Show All" : "Current (HEAD)",
+             app->graph.commit_count);
+    const char *hdr_sgr = app->opts.color
+                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                          : (is_focused ? "\033[7m" : "");
+    frame_move_write(frame, p->y, p->x, ctrl, p->w, hdr_sgr, true);
+    if (p->h < 2)
+        return;
+
+    /* 2. Column Headers: Graph | Description | Date | Author | Commit */
+    int date_w = 17;
+    int author_w = 14;
+    int hash_w = 8;
+    int right_cols = date_w + 1 + author_w + 1 + hash_w + 1;
+    int desc_avail = p->w - right_cols;
+    if (desc_avail < 20)
+        desc_avail = p->w;
+
+    char col_hdr[512];
+    if (p->w >= 72) {
+        snprintf(col_hdr, sizeof(col_hdr), " %-*.*s %-*s %-*s %-*s",
+                 desc_avail - 1, desc_avail - 1, "Graph & Description",
+                 date_w, "Date", author_w, "Author", hash_w, "Commit");
+    } else {
+        snprintf(col_hdr, sizeof(col_hdr), " Graph & Description");
+    }
+    frame_move_write(frame, p->y + 1, p->x, col_hdr, p->w,
+                     app->opts.color ? "\033[4;37;48;5;235m" : "", true);
+
+    /* 3. Commit rows */
+    int list_h = p->h - 2;
+    if (list_h <= 0)
+        return;
+
+    if (p->graph_cursor >= app->graph.commit_count &&
+        app->graph.commit_count > 0)
+        p->graph_cursor = app->graph.commit_count - 1;
+    if (p->graph_cursor < p->graph_top)
+        p->graph_top = p->graph_cursor;
+    if (p->graph_cursor >= p->graph_top + (size_t)list_h)
+        p->graph_top = p->graph_cursor - (size_t)list_h + 1;
+
+    for (int r = 0; r < list_h; r++) {
+        size_t idx = p->graph_top + (size_t)r;
+        int row_y = p->y + 2 + r;
+        if (idx >= app->graph.commit_count) {
+            frame_move_write(frame, row_y, p->x, "", p->w, "", true);
+            continue;
+        }
+
+        const knox_commit_t *c = &app->graph.commits[idx];
+        bool sel = (idx == p->graph_cursor);
+
+        char gcells[512];
+        int gvis = 0;
+        knox_graph_format_row(&app->graph, idx, 24,
+                              app->opts.color && !sel, app->opts.linux_vt,
+                              gcells, sizeof(gcells), &gvis);
+
+        /* Format inline ref badges: [HEAD -> dev] [origin/dev] [tag: v0.1.0] */
+        tam_str_t refs = tam_str_new("");
+        for (size_t h = 0; h < c->head_count; h++) {
+            bool is_cur = (repo->branch && strcmp(c->heads[h], repo->branch) == 0);
+            if (app->opts.color && !sel) {
+                refs = tam_str_cat_printf(refs, "\033[1;36m[%s%s]\033[0m ",
+                                          is_cur ? "* " : "", c->heads[h]);
+            } else {
+                refs = tam_str_cat_printf(refs, "[%s%s] ",
+                                          is_cur ? "* " : "", c->heads[h]);
+            }
+        }
+        for (size_t rm = 0; rm < c->remote_count; rm++) {
+            if (app->opts.color && !sel)
+                refs = tam_str_cat_printf(refs, "\033[35m[%s]\033[0m ", c->remotes[rm]);
+            else
+                refs = tam_str_cat_printf(refs, "[%s] ", c->remotes[rm]);
+        }
+        for (size_t t = 0; t < c->tag_count; t++) {
+            if (app->opts.color && !sel)
+                refs = tam_str_cat_printf(refs, "\033[1;33m[tag: %s]\033[0m ", c->tags[t]);
+            else
+                refs = tam_str_cat_printf(refs, "[tag: %s] ", c->tags[t]);
+        }
+
+        tam_str_t left_part = tam_str_new(" ");
+        left_part = tam_str_cat(left_part, gcells);
+        left_part = tam_str_cat(left_part, " ");
+        left_part = tam_str_cat(left_part, refs);
+        if (c->is_uncommitted && app->opts.color && !sel) {
+            left_part = tam_str_cat_printf(left_part, "\033[3;33m%s\033[0m",
+                                           c->subject ? c->subject : "");
+        } else if (c->is_head && app->opts.color && !sel) {
+            left_part = tam_str_cat_printf(left_part, "\033[1m%s\033[0m",
+                                           c->subject ? c->subject : "");
+        } else {
+            left_part = tam_str_cat(left_part, c->subject ? c->subject : "");
+        }
+        tam_str_free(refs);
+
+        const char *row_bg = "";
+        if (sel) {
+            row_bg = app->opts.color
+                     ? (is_focused ? "\033[1;37;44m" : "\033[48;5;238m")
+                     : "\033[7m";
+        }
+
+        if (p->w >= 72) {
+            char clipped_left[2048];
+            format_clipped_padded(clipped_left, sizeof(clipped_left),
+                                  left_part, desc_avail, true);
+            char date_str[32];
+            format_commit_date(c->timestamp, date_str, sizeof(date_str));
+            char right_meta[256];
+            if (app->opts.color && !sel) {
+                snprintf(right_meta, sizeof(right_meta),
+                         " \033[90m%-*.*s\033[0m \033[32m%-*.*s\033[0m \033[33m%-8.8s\033[0m",
+                         date_w, date_w, date_str,
+                         author_w, author_w, c->author ? c->author : "",
+                         c->hash);
+            } else {
+                snprintf(right_meta, sizeof(right_meta),
+                         " %-*.*s %-*.*s %-8.8s",
+                         date_w, date_w, date_str,
+                         author_w, author_w, c->author ? c->author : "",
+                         c->hash);
+            }
+            tam_str_t full_row = tam_str_new(clipped_left);
+            full_row = tam_str_cat(full_row, right_meta);
+            frame_move_write(frame, row_y, p->x, full_row, p->w, row_bg, true);
+            tam_str_free(full_row);
+        } else {
+            frame_move_write(frame, row_y, p->x, left_part, p->w, row_bg, true);
+        }
+        tam_str_free(left_part);
+    }
+}
+
+static void render_commit_detail_pane(knox_app_t *app, knox_pane_t *p,
+                                      tam_str_t *frame, bool is_focused)
+{
+    if (p->repo_idx >= app->ws.count)
+        p->repo_idx = app->active_repo_idx;
+    app_ensure_commit_details(app, p->repo_idx, p->inspect_commit_idx);
+
+    const knox_repo_t *repo = &app->ws.repos[p->repo_idx];
+    const knox_commit_details_t *d = &app->details;
+
+    char hdr[512];
+    snprintf(hdr, sizeof(hdr),
+             " Commit Details: %.8s (%s) | %zu file(s) changed [Enter: View Diff, v: View File, Ctrl+D: Close]",
+             d->hash, repo->name, d->file_count);
+    const char *hdr_sgr = app->opts.color
+                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                          : (is_focused ? "\033[7m" : "");
+    frame_move_write(frame, p->y, p->x, hdr, p->w, hdr_sgr, true);
+    if (p->h < 2)
+        return;
+
+    /* Summary lines at top of inspector */
+    char date_str[32];
+    format_commit_date(d->author_date, date_str, sizeof(date_str));
+    char meta_line[512];
+    snprintf(meta_line, sizeof(meta_line),
+             " Commit: %s | Author: %s <%s> | Date: %s",
+             d->hash, d->author ? d->author : "",
+             d->author_email ? d->author_email : "", date_str);
+    frame_move_write(frame, p->y + 1, p->x, meta_line, p->w,
+                     app->opts.color ? "\033[36m" : "", true);
+
+    if (p->h < 3)
+        return;
+
+    /* Subject / first line of body */
+    char subj_line[512] = " ";
+    if (d->body) {
+        const char *nl = strchr(d->body, '\n');
+        size_t slen = nl ? (size_t)(nl - d->body) : strlen(d->body);
+        snprintf(subj_line, sizeof(subj_line), " Message: %.*s",
+                 (int)slen, d->body);
+    }
+    frame_move_write(frame, p->y + 2, p->x, subj_line, p->w,
+                     app->opts.color ? "\033[1m" : "", true);
+
+    int list_h = p->h - 3;
+    if (list_h <= 0)
+        return;
+
+    if (p->inspect_file_cursor >= d->file_count && d->file_count > 0)
+        p->inspect_file_cursor = d->file_count - 1;
+    if (p->inspect_file_cursor < p->inspect_file_top)
+        p->inspect_file_top = p->inspect_file_cursor;
+    if (p->inspect_file_cursor >= p->inspect_file_top + (size_t)list_h)
+        p->inspect_file_top = p->inspect_file_cursor - (size_t)list_h + 1;
+
+    for (int r = 0; r < list_h; r++) {
+        size_t idx = p->inspect_file_top + (size_t)r;
+        int row_y = p->y + 3 + r;
+        if (idx >= d->file_count) {
+            frame_move_write(frame, row_y, p->x, "", p->w, "", true);
+            continue;
+        }
+        const knox_file_change_t *fc = &d->files[idx];
+        bool sel = (idx == p->inspect_file_cursor);
+        char st_let = (char)((fc->index_status != KNOX_CHANGE_NONE)
+                             ? fc->index_status
+                             : fc->worktree_status);
+
+        char stats[64] = "";
+        if (fc->additions >= 0 || fc->deletions >= 0) {
+            if (app->opts.color && !sel) {
+                snprintf(stats, sizeof(stats),
+                         " \033[32m+%d\033[0m \033[31m-%d\033[0m",
+                         fc->additions >= 0 ? fc->additions : 0,
+                         fc->deletions >= 0 ? fc->deletions : 0);
+            } else {
+                snprintf(stats, sizeof(stats), " +%d -%d",
+                         fc->additions >= 0 ? fc->additions : 0,
+                         fc->deletions >= 0 ? fc->deletions : 0);
+            }
+        }
+
+        char line[512];
+        if (fc->old_path) {
+            snprintf(line, sizeof(line), "   [%c] %s -> %s%s",
+                     st_let, fc->old_path, fc->path, stats);
+        } else if (app->opts.color && !sel) {
+            const char *sc = (st_let == 'A') ? "\033[32m" :
+                             (st_let == 'D') ? "\033[31m" : "\033[33m";
+            snprintf(line, sizeof(line), "   %s[%c]\033[0m %s%s",
+                     sc, st_let, fc->path, stats);
+        } else {
+            snprintf(line, sizeof(line), "   [%c] %s%s",
+                     st_let, fc->path, stats);
+        }
+
+        const char *row_bg = "";
+        if (sel) {
+            row_bg = app->opts.color
+                     ? (is_focused ? "\033[1;37;44m" : "\033[48;5;238m")
+                     : "\033[7m";
+        }
+        frame_move_write(frame, row_y, p->x, line, p->w, row_bg, true);
+    }
+}
+
+static const char *view_style_sgr(unsigned char style)
+{
+    switch (style) {
+    case VIEW_STYLE_H1:         return "\033[1;4;36m";
+    case VIEW_STYLE_H2:         return "\033[1;36m";
+    case VIEW_STYLE_H3:         return "\033[1;34m";
+    case VIEW_STYLE_BOLD:       return "\033[1m";
+    case VIEW_STYLE_ITALIC:     return "\033[3m";
+    case VIEW_STYLE_STRIKE:     return "\033[9m";
+    case VIEW_STYLE_CODE:       return "\033[33m";
+    case VIEW_STYLE_LINK:       return "\033[4;34m";
+    case VIEW_STYLE_LINK_URL:   return "\033[90m";
+    case VIEW_STYLE_LINK_CUR:   return "\033[1;7;36m";
+    case VIEW_STYLE_QUOTE:      return "\033[32m";
+    case VIEW_STYLE_RULE:       return "\033[90m";
+    case VIEW_STYLE_TABLE_HDR:  return "\033[1;36m";
+    case VIEW_STYLE_NODE:       return "\033[1;36m";
+    case VIEW_STYLE_EDGE:       return "\033[33m";
+    default:                    return "";
+    }
+}
+
+static unsigned char lookup_rendered_style(const struct view_styles *st,
+                                           off_t byte_off)
+{
+    if (!st || st->count == 0)
+        return VIEW_STYLE_NONE;
+    /* Binary search for last span with start <= byte_off < end */
+    for (size_t i = 0; i < st->count; i++) {
+        if (st->spans[i].start <= byte_off && byte_off < st->spans[i].end)
+            return st->spans[i].style;
+        if (st->spans[i].start > byte_off)
+            break;
+    }
+    return VIEW_STYLE_NONE;
+}
+
+static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
+                               tam_str_t *frame, bool is_focused)
+{
+    knox_viewer_doc_t *doc = &p->doc;
+    if (doc->render_mode)
+        knox_viewer_ensure_rendered(doc, p->w > 4 ? p->w - 2 : 40, app->opts.ascii);
+
+    size_t total_lines = doc->render_mode ? doc->rend_line_count : doc->line_count;
+
+    /* 1. Breadcrumb & Mode Header */
+    char hdr[512];
+    snprintf(hdr, sizeof(hdr),
+             " %s | Mode: %s [R] | Lang: %s | Line %zu/%zu [Alt+E Edit]",
+             doc->breadcrumb ? doc->breadcrumb : (doc->title ? doc->title : "File"),
+             doc->render_mode ? "Rendered" : "Raw Syntax",
+             knox_syntax_lang_name(doc->lang),
+             total_lines ? doc->cursor_line + 1 : 0,
+             total_lines);
+    const char *hdr_sgr = app->opts.color
+                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
+                          : (is_focused ? "\033[7m" : "");
+    frame_move_write(frame, p->y, p->x, hdr, p->w, hdr_sgr, true);
+
+    int body_h = p->h - 1;
+    if (body_h <= 0)
+        return;
+
+    if (doc->cursor_line >= total_lines && total_lines > 0)
+        doc->cursor_line = total_lines - 1;
+    if (doc->cursor_line < doc->top_line)
+        doc->top_line = doc->cursor_line;
+    if (doc->cursor_line >= doc->top_line + (size_t)body_h)
+        doc->top_line = doc->cursor_line - (size_t)body_h + 1;
+
+    uint8_t tok_buf[4096];
+
+    for (int r = 0; r < body_h; r++) {
+        size_t idx = doc->top_line + (size_t)r;
+        int row_y = p->y + 1 + r;
+        if (idx >= total_lines) {
+            frame_move_write(frame, row_y, p->x, "~", p->w,
+                             app->opts.color ? "\033[90m" : "", true);
+            continue;
+        }
+
+        bool is_cursor = (idx == doc->cursor_line);
+        tam_str_t row_str = tam_str_new("");
+
+        if (doc->render_mode) {
+            /* Rendered Markdown / HTML / Mermaid row */
+            const char *base = doc->rendered_buf.data ? doc->rendered_buf.data : "";
+            size_t off = doc->rend_offsets[idx];
+            size_t len = doc->rend_lengths[idx];
+            row_str = tam_str_cat(row_str, " ");
+
+            if (app->opts.color && !is_cursor) {
+                unsigned char cur_st = VIEW_STYLE_NONE;
+                for (size_t b = 0; b < len; b++) {
+                    unsigned char st = lookup_rendered_style(
+                        &doc->rendered_buf.styles, (off_t)(off + b));
+                    if (st != cur_st) {
+                        row_str = tam_str_cat(row_str, "\033[0m");
+                        row_str = tam_str_cat(row_str, view_style_sgr(st));
+                        cur_st = st;
+                    }
+                    row_str = tam_str_cat_len(row_str, base + off + b, 1);
+                }
+                if (cur_st != VIEW_STYLE_NONE)
+                    row_str = tam_str_cat(row_str, "\033[0m");
+            } else {
+                row_str = tam_str_cat_len(row_str, base + off, len);
+            }
+        } else {
+            /* Raw syntax-highlighted row with line numbers */
+            if (doc->kind == KNOX_DOC_FILE) {
+                if (app->opts.color && !is_cursor)
+                    row_str = tam_str_cat_printf(row_str, "\033[90m%4zu \033[0m", idx + 1);
+                else
+                    row_str = tam_str_cat_printf(row_str, "%4zu ", idx + 1);
+            } else {
+                row_str = tam_str_cat(row_str, " ");
+            }
+
+            const char *line = doc->raw_text + doc->line_offsets[idx];
+            size_t len = doc->line_lengths[idx];
+            size_t skip = (size_t)doc->left_col;
+            if (skip < len) {
+                const char *vis_line = line + skip;
+                size_t vis_len = len - skip;
+                if (vis_len > sizeof(tok_buf))
+                    vis_len = sizeof(tok_buf);
+
+                knox_lex_state_t in_st = doc->line_states
+                                         ? (knox_lex_state_t)doc->line_states[idx]
+                                         : KNOX_LEX_NORMAL;
+                knox_syntax_highlight_line(doc->lang, in_st,
+                                           vis_line, vis_len, tok_buf);
+
+                if (app->opts.color && !is_cursor) {
+                    uint8_t cur_tok = KNOX_TOK_NORMAL;
+                    for (size_t b = 0; b < vis_len; b++) {
+                        uint8_t tk = tok_buf[b];
+                        if (tk != cur_tok) {
+                            row_str = tam_str_cat(row_str, "\033[0m");
+                            row_str = tam_str_cat(row_str,
+                                knox_syntax_token_sgr((knox_token_kind_t)tk,
+                                                      app->opts.linux_vt));
+                            cur_tok = tk;
+                        }
+                        if (vis_line[b] == '\t')
+                            row_str = tam_str_cat(row_str, "    ");
+                        else
+                            row_str = tam_str_cat_len(row_str, vis_line + b, 1);
+                    }
+                    if (cur_tok != KNOX_TOK_NORMAL)
+                        row_str = tam_str_cat(row_str, "\033[0m");
+                } else {
+                    for (size_t b = 0; b < vis_len; b++) {
+                        if (vis_line[b] == '\t')
+                            row_str = tam_str_cat(row_str, "    ");
+                        else
+                            row_str = tam_str_cat_len(row_str, vis_line + b, 1);
+                    }
+                }
+            }
+        }
+
+        const char *row_bg = "";
+        if (is_cursor) {
+            row_bg = app->opts.color
+                     ? (is_focused ? tam_pager_attention_sgr(app->opts.linux_vt)
+                                   : "\033[48;5;236m")
+                     : "\033[7m";
+        }
+        frame_move_write(frame, row_y, p->x, row_str, p->w, row_bg, true);
+        tam_str_free(row_str);
+    }
+}
+
+static void render_split_tree(knox_app_t *app, knox_split_node_t *node,
+                              tam_str_t *frame)
+{
+    if (!node)
+        return;
+    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+
+    if (node->type == KNOX_NODE_LEAF) {
+        knox_pane_t *p = node->pane;
+        if (!p)
+            return;
+        knox_tab_t *tab = app_current_tab(app);
+        bool is_focused = (app->focus == FOCUS_MAIN_PANE &&
+                           tab && tab->active_pane == p);
+        if (p->content == KNOX_PANE_GRAPH)
+            render_graph_pane(app, p, frame, is_focused);
+        else if (p->content == KNOX_PANE_COMMIT_DETAIL)
+            render_commit_detail_pane(app, p, frame, is_focused);
+        else
+            render_viewer_pane(app, p, frame, is_focused);
+        return;
+    }
+
+    render_split_tree(app, node->child1, frame);
+    if (node->type == KNOX_NODE_SPLIT_V) {
+        int sep_x = node->child1->x + node->child1->w;
+        for (int r = 0; r < node->h; r++) {
+            frame_move_write(frame, node->y + r, sep_x, bx->v, 1,
+                             app->opts.color ? "\033[90m" : "", false);
+        }
+    } else if (node->type == KNOX_NODE_SPLIT_H) {
+        int sep_y = node->child1->y + node->child1->h;
+        tam_str_t hline = tam_str_new("");
+        for (int c = 0; c < node->w; c++)
+            hline = tam_str_cat(hline, bx->h);
+        frame_move_write(frame, sep_y, node->x, hline, node->w,
+                         app->opts.color ? "\033[90m" : "", false);
+        tam_str_free(hline);
+    }
+    render_split_tree(app, node->child2, frame);
+}
+
+static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
+                                 int rows, int cols)
+{
+    if (app->modal == MODAL_NONE)
+        return;
+
+    if (app->modal == MODAL_SEARCH || app->modal == MODAL_COMMIT ||
+        app->modal == MODAL_CONFIRM_SYNC) {
+        const char *prefix = (app->modal == MODAL_SEARCH) ? "Find: " :
+                             (app->modal == MODAL_COMMIT) ? "Commit message (staged files): " :
+                             "Confirm protected push: ";
+        char bar[512];
+        if (app->modal == MODAL_CONFIRM_SYNC)
+            snprintf(bar, sizeof(bar), " %s", app->status_msg);
+        else
+            snprintf(bar, sizeof(bar), " %s%s_", prefix, app->prompt_buf);
+        const char *bg = app->opts.color ? "\033[1;30;43m" : "\033[7m";
+        frame_move_write(frame, rows - 1, 1, bar, cols, bg, true);
+        return;
+    }
+
+    int box_w = cols - 10;
+    if (box_w > 78)
+        box_w = 78;
+    if (box_w < 30)
+        box_w = cols;
+    int box_h = rows - 4;
+    if (box_h > 24)
+        box_h = 24;
+    if (box_h < 8)
+        box_h = rows - 2;
+
+    int x0 = (cols - box_w) / 2 + 1;
+    int y0 = (rows - box_h) / 2 + 1;
+    const char *bg = app->opts.color ? "\033[37;48;5;235m" : "\033[7m";
+    const char *hdr_bg = app->opts.color ? "\033[1;30;46m" : "\033[7m";
+
+    if (app->modal == MODAL_GUIDANCE) {
+        frame_move_write(frame, y0, x0,
+                         " tam-knox Keybinding Guidance (Press Esc or Ctrl+G to close)",
+                         box_w, hdr_bg, true);
+        for (int r = 1; r < box_h; r++) {
+            size_t idx = (size_t)(r - 1);
+            char line[256] = "";
+            if (idx < WIDGET_COUNT) {
+                snprintf(line, sizeof(line), "  %-16s %-22s %s",
+                         WIDGET_TABLE[idx].keys,
+                         WIDGET_TABLE[idx].name,
+                         WIDGET_TABLE[idx].desc);
+            }
+            frame_move_write(frame, y0 + r, x0, line, box_w, bg, true);
+        }
+    } else if (app->modal == MODAL_PALETTE) {
+        char mod_str[64] = "";
+        if (app->chord_mods & TAM_MOD_CTRL)  strcat(mod_str, "Ctrl+");
+        if (app->chord_mods & TAM_MOD_ALT)   strcat(mod_str, "Alt+");
+        if (app->chord_mods & TAM_MOD_SHIFT) strcat(mod_str, "Shift+");
+
+        char title[512];
+        snprintf(title, sizeof(title),
+                 " Command Palette & Chord Composer [Tab: latch modifier (%s)] | Filter: %s_",
+                 mod_str[0] ? mod_str : "none", app->prompt_buf);
+        frame_move_write(frame, y0, x0, title, box_w, hdr_bg, true);
+
+        size_t match_indices[WIDGET_COUNT];
+        size_t match_count = 0;
+        for (size_t i = 0; i < WIDGET_COUNT; i++) {
+            if (app->prompt_len == 0 ||
+                strcasestr(WIDGET_TABLE[i].name, app->prompt_buf) ||
+                strcasestr(WIDGET_TABLE[i].desc, app->prompt_buf) ||
+                strcasestr(WIDGET_TABLE[i].keys, app->prompt_buf)) {
+                match_indices[match_count++] = i;
+            }
+        }
+        if (app->palette_cursor >= match_count && match_count > 0)
+            app->palette_cursor = match_count - 1;
+
+        for (int r = 1; r < box_h; r++) {
+            size_t m = (size_t)(r - 1);
+            char line[256] = "";
+            const char *row_sgr = bg;
+            if (m < match_count) {
+                size_t wi = match_indices[m];
+                snprintf(line, sizeof(line), "  %-22s %-16s %s",
+                         WIDGET_TABLE[wi].name,
+                         WIDGET_TABLE[wi].keys,
+                         WIDGET_TABLE[wi].desc);
+                if (m == app->palette_cursor)
+                    row_sgr = app->opts.color ? "\033[1;37;44m" : "\033[7m";
+            }
+            frame_move_write(frame, y0 + r, x0, line, box_w, row_sgr, true);
+        }
+    }
+}
+
+static void render_footer(knox_app_t *app, tam_str_t *frame,
+                          int rows, int cols)
+{
+    const char *zone_name =
+        (app->focus == FOCUS_SIDEBAR_REPOS)    ? "Repos" :
+        (app->focus == FOCUS_SIDEBAR_CHANGES)  ? "Changes" :
+        (app->focus == FOCUS_SIDEBAR_EXPLORER) ? "Explorer" : "Workbench";
+
+    const char *hints =
+        (app->focus == FOCUS_SIDEBAR_REPOS)
+        ? "[Enter] Load Graph  [Alt+S] Sync  [Tab] Focus  [Alt+2] Explorer  [Ctrl+G] Keys"
+        : (app->focus == FOCUS_SIDEBAR_CHANGES)
+        ? "[Space] Stage/Unstage  [Enter] Diff  [Alt+C] Commit  [Alt+E] Edit  [Ctrl+G] Keys"
+        : (app->focus == FOCUS_SIDEBAR_EXPLORER)
+        ? "[Enter] Open/Expand  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [Ctrl+G] Keys"
+        : "[Enter] Inspect  [R] Render/Raw  [Alt+V/H] Split  [Alt+,/.] Tab  [Ctrl+D] Close  [Ctrl+G] Keys";
+
+    char left_label[512];
+    if (app->status_msg[0]) {
+        snprintf(left_label, sizeof(left_label), " [%s] %s | %s",
+                 zone_name, app->status_msg, hints);
+    } else {
+        snprintf(left_label, sizeof(left_label), " [%s] %s",
+                 zone_name, hints);
+    }
+
+    size_t attn = 1, top = 1, bot = 1, total = 1;
+    knox_pane_t *ap = app_active_pane(app);
+    if (ap && ap->content == KNOX_PANE_GRAPH && app->graph.commit_count > 0) {
+        attn = ap->graph_cursor + 1;
+        top = ap->graph_top + 1;
+        total = app->graph.commit_count;
+        bot = top + (size_t)(ap->h > 2 ? ap->h - 2 : 1) - 1;
+        if (bot > total) bot = total;
+    } else if (ap && ap->content == KNOX_PANE_VIEWER) {
+        total = ap->doc.render_mode ? ap->doc.rend_line_count : ap->doc.line_count;
+        if (total == 0) total = 1;
+        attn = ap->doc.cursor_line + 1;
+        top = ap->doc.top_line + 1;
+        bot = top + (size_t)(ap->h > 1 ? ap->h - 1 : 1) - 1;
+        if (bot > total) bot = total;
+    }
+
+    tam_pager_footer_t pf = {
+        .label = left_label,
+        .has_attn = true,
+        .attn_line = attn,
+        .top_line = top,
+        .bot_line = bot,
+        .total_lines = total,
+        .total_known = true,
+        .link_hint = NULL,
+        .version = KNOX_VERSION
+    };
+    char footer_buf[1024];
+    tam_pager_format_footer(footer_buf, sizeof(footer_buf), cols, &pf);
+
+    const char *bg = (app->opts.color && !app->opts.linux_vt)
+                     ? "\033[37;48;5;236m" : "\033[7m";
+    frame_move_write(frame, rows, 1, footer_buf, cols,
+                     app->opts.color ? bg : "", true);
+}
+
+static void app_draw(knox_app_t *app)
+{
+    int rows = app->tty.rows;
+    int cols = app->tty.cols;
+    if (rows < 6) rows = 24;
+    if (cols < 40) cols = 80;
+
+    app->sidebar_width = cols / 3;
+    if (app->sidebar_width < 28)
+        app->sidebar_width = 28;
+    if (app->sidebar_width > 44)
+        app->sidebar_width = 44;
+    if (cols < 65)
+        app->sidebar_width = cols / 2;
+
+    int body_y = 2;
+    int body_h = rows - 2;
+    int main_x = 1;
+    int main_w = cols;
+
+    tam_str_t frame = tam_str_new("");
+    render_top_bar(app, &frame, cols);
+
+    if (app->sidebar_visible) {
+        render_sidebar(app, &frame, 1, body_y, app->sidebar_width, body_h);
+        const struct box_chars *bx = render_box_chars(app->opts.ascii);
+        int sep_x = app->sidebar_width + 1;
+        for (int r = 0; r < body_h; r++) {
+            frame_move_write(&frame, body_y + r, sep_x, bx->v, 1,
+                             app->opts.color ? "\033[90m" : "", false);
+        }
+        main_x = app->sidebar_width + 2;
+        main_w = cols - app->sidebar_width - 1;
+    }
+
+    knox_tab_t *tab = app_current_tab(app);
+    if (tab && tab->root) {
+        knox_split_layout(tab->root, main_x, body_y, main_w, body_h);
+        render_split_tree(app, tab->root, &frame);
+    }
+
+    render_footer(app, &frame, rows, cols);
+    render_modal_overlay(app, &frame, rows, cols);
+
+    tam_tty_frame_begin(&app->tty);
+    tam_tty_write(&app->tty, frame, tam_str_len(frame));
+    tam_tty_frame_end(&app->tty);
+    tam_str_free(frame);
+}
+
+/* ========================================================================= */
+/* Widget Dispatch & Keyboard Event Handling                                 */
+/* ========================================================================= */
+
+static void app_move_selection(knox_app_t *app, int delta)
+{
+    if (app->focus == FOCUS_SIDEBAR_REPOS) {
+        if (app->ws.count == 0)
+            return;
+        ssize_t next = (ssize_t)app->active_repo_idx + delta;
+        if (next < 0) next = 0;
+        if ((size_t)next >= app->ws.count) next = (ssize_t)app->ws.count - 1;
+        if ((size_t)next != app->active_repo_idx) {
+            app->active_repo_idx = (size_t)next;
+            app->change_cursor = 0;
+            app->change_top = 0;
+            /* Sync Git Graph pane in active tab if visible */
+            knox_pane_t *ap = app_active_pane(app);
+            if (ap && ap->content == KNOX_PANE_GRAPH) {
+                ap->repo_idx = app->active_repo_idx;
+                ap->graph_cursor = 0;
+                ap->graph_top = 0;
+                app_ensure_repo_graph(app, app->active_repo_idx,
+                                      ap->graph_all_branches,
+                                      ap->graph_show_remotes, true);
+            }
+        }
+    } else if (app->focus == FOCUS_SIDEBAR_CHANGES) {
+        if (app->active_repo_idx >= app->ws.count)
+            return;
+        size_t cnt = app->ws.repos[app->active_repo_idx].change_count;
+        if (cnt == 0)
+            return;
+        ssize_t next = (ssize_t)app->change_cursor + delta;
+        if (next < 0) next = 0;
+        if ((size_t)next >= cnt) next = (ssize_t)cnt - 1;
+        app->change_cursor = (size_t)next;
+    } else if (app->focus == FOCUS_SIDEBAR_EXPLORER) {
+        if (app->explorer.flat_count == 0)
+            return;
+        ssize_t next = (ssize_t)app->explorer_cursor + delta;
+        if (next < 0) next = 0;
+        if ((size_t)next >= app->explorer.flat_count)
+            next = (ssize_t)app->explorer.flat_count - 1;
+        app->explorer_cursor = (size_t)next;
+    } else if (app->focus == FOCUS_MAIN_PANE) {
+        knox_pane_t *ap = app_active_pane(app);
+        if (!ap)
+            return;
+        if (ap->content == KNOX_PANE_GRAPH) {
+            if (app->graph.commit_count == 0)
+                return;
+            ssize_t next = (ssize_t)ap->graph_cursor + delta;
+            if (next < 0) next = 0;
+            if ((size_t)next >= app->graph.commit_count)
+                next = (ssize_t)app->graph.commit_count - 1;
+            ap->graph_cursor = (size_t)next;
+        } else if (ap->content == KNOX_PANE_COMMIT_DETAIL) {
+            if (app->details.file_count == 0)
+                return;
+            ssize_t next = (ssize_t)ap->inspect_file_cursor + delta;
+            if (next < 0) next = 0;
+            if ((size_t)next >= app->details.file_count)
+                next = (ssize_t)app->details.file_count - 1;
+            ap->inspect_file_cursor = (size_t)next;
+        } else if (ap->content == KNOX_PANE_VIEWER) {
+            size_t total = ap->doc.render_mode
+                           ? ap->doc.rend_line_count
+                           : ap->doc.line_count;
+            if (total == 0)
+                return;
+            ssize_t next = (ssize_t)ap->doc.cursor_line + delta;
+            if (next < 0) next = 0;
+            if ((size_t)next >= total) next = (ssize_t)total - 1;
+            ap->doc.cursor_line = (size_t)next;
+        }
+    }
+}
+
+static void app_execute_widget(knox_app_t *app, const char *widget)
+{
+    if (!widget)
+        return;
+
+    if (strcmp(widget, "quit") == 0) {
+        app->running = false;
+    } else if (strcmp(widget, "guidance") == 0) {
+        app->modal = (app->modal == MODAL_GUIDANCE) ? MODAL_NONE : MODAL_GUIDANCE;
+    } else if (strcmp(widget, "execute") == 0) {
+        app->modal = MODAL_PALETTE;
+        app->prompt_buf[0] = '\0';
+        app->prompt_len = 0;
+        app->palette_cursor = 0;
+        app->chord_mods = 0;
+    } else if (strcmp(widget, "view-source-control") == 0) {
+        app->sidebar_visible = true;
+        app->sidebar_mode = SIDEBAR_SOURCE_CONTROL;
+        app->focus = FOCUS_SIDEBAR_REPOS;
+    } else if (strcmp(widget, "view-explorer") == 0) {
+        app->sidebar_visible = true;
+        app->sidebar_mode = SIDEBAR_EXPLORER;
+        app->focus = FOCUS_SIDEBAR_EXPLORER;
+    } else if (strcmp(widget, "view-graph") == 0) {
+        for (size_t i = 0; i < app->tab_count; i++) {
+            if (app->tabs[i].active_pane &&
+                app->tabs[i].active_pane->content == KNOX_PANE_GRAPH) {
+                app->active_tab = i;
+                app->focus = FOCUS_MAIN_PANE;
+                return;
+            }
+        }
+        knox_pane_t *gp = knox_pane_new(KNOX_PANE_GRAPH, app->active_repo_idx);
+        if (gp) {
+            app_add_tab(app, "Git Graph", gp);
+            app->focus = FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "toggle-sidebar") == 0) {
+        app->sidebar_visible = !app->sidebar_visible;
+        if (!app->sidebar_visible)
+            app->focus = FOCUS_MAIN_PANE;
+    } else if (strcmp(widget, "focus-next") == 0) {
+        if (!app->sidebar_visible) {
+            knox_tab_t *t = app_current_tab(app);
+            if (t && t->root)
+                t->active_pane = knox_split_next_pane(t->root, t->active_pane);
+            app->focus = FOCUS_MAIN_PANE;
+        } else if (app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) {
+            if (app->focus == FOCUS_SIDEBAR_REPOS)
+                app->focus = FOCUS_SIDEBAR_CHANGES;
+            else if (app->focus == FOCUS_SIDEBAR_CHANGES)
+                app->focus = FOCUS_MAIN_PANE;
+            else
+                app->focus = FOCUS_SIDEBAR_REPOS;
+        } else {
+            app->focus = (app->focus == FOCUS_SIDEBAR_EXPLORER)
+                         ? FOCUS_MAIN_PANE : FOCUS_SIDEBAR_EXPLORER;
+        }
+    } else if (strcmp(widget, "focus-prev") == 0) {
+        if (!app->sidebar_visible) {
+            app->focus = FOCUS_MAIN_PANE;
+        } else if (app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) {
+            if (app->focus == FOCUS_MAIN_PANE)
+                app->focus = FOCUS_SIDEBAR_CHANGES;
+            else if (app->focus == FOCUS_SIDEBAR_CHANGES)
+                app->focus = FOCUS_SIDEBAR_REPOS;
+            else
+                app->focus = FOCUS_MAIN_PANE;
+        } else {
+            app->focus = (app->focus == FOCUS_MAIN_PANE)
+                         ? FOCUS_SIDEBAR_EXPLORER : FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "split-vertical") == 0 ||
+               strcmp(widget, "split-horizontal") == 0) {
+        knox_tab_t *t = app_current_tab(app);
+        if (!t || !t->active_pane)
+            return;
+        knox_split_node_t *leaf = knox_split_find_pane(t->root, t->active_pane);
+        if (!leaf)
+            return;
+        knox_pane_t *np = knox_pane_new(t->active_pane->content,
+                                        app->active_repo_idx);
+        if (!np)
+            return;
+        if (np->content == KNOX_PANE_VIEWER && t->active_pane->doc.abs_path) {
+            knox_viewer_open_file(&np->doc, t->active_pane->doc.abs_path,
+                                  t->active_pane->doc.repo_name,
+                                  t->active_pane->doc.render_mode,
+                                  t->active_pane->w / 2, app->opts.ascii);
+        } else if (np->content == KNOX_PANE_VIEWER && t->active_pane->doc.raw_text) {
+            knox_viewer_open_buffer(&np->doc, t->active_pane->doc.kind,
+                                    t->active_pane->doc.title,
+                                    t->active_pane->doc.repo_name,
+                                    t->active_pane->doc.breadcrumb,
+                                    t->active_pane->doc.raw_text,
+                                    t->active_pane->doc.raw_len,
+                                    t->active_pane->doc.lang);
+        }
+        knox_node_type_t st = (strcmp(widget, "split-vertical") == 0)
+                              ? KNOX_NODE_SPLIT_V : KNOX_NODE_SPLIT_H;
+        if (knox_split_pane(leaf, st, np)) {
+            t->active_pane = np;
+            app->focus = FOCUS_MAIN_PANE;
+            app_set_status(app, "Split pane %s",
+                           st == KNOX_NODE_SPLIT_V ? "vertically" : "horizontally");
+        } else {
+            knox_pane_free(np);
+        }
+    } else if (strcmp(widget, "focus-other-pane") == 0) {
+        knox_tab_t *t = app_current_tab(app);
+        if (t && t->root) {
+            t->active_pane = knox_split_next_pane(t->root, t->active_pane);
+            app->focus = FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "tab-prev") == 0) {
+        if (app->tab_count > 1) {
+            app->active_tab = (app->active_tab + app->tab_count - 1) % app->tab_count;
+            app->focus = FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "tab-next") == 0) {
+        if (app->tab_count > 1) {
+            app->active_tab = (app->active_tab + 1) % app->tab_count;
+            app->focus = FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "new") == 0) {
+        knox_pane_t *gp = knox_pane_new(KNOX_PANE_GRAPH, app->active_repo_idx);
+        if (gp) {
+            char title[64];
+            const char *rname = (app->active_repo_idx < app->ws.count)
+                                ? app->ws.repos[app->active_repo_idx].name
+                                : "Repo";
+            snprintf(title, sizeof(title), "Graph %s", rname);
+            app_add_tab(app, title, gp);
+            app->focus = FOCUS_MAIN_PANE;
+        }
+    } else if (strcmp(widget, "close") == 0) {
+        knox_tab_t *t = app_current_tab(app);
+        if (!t || !t->root)
+            return;
+        if (knox_split_count_leaves(t->root) > 1 && t->active_pane) {
+            knox_split_node_t *leaf = knox_split_find_pane(t->root, t->active_pane);
+            knox_split_node_t *new_root = t->root;
+            knox_pane_t *next_p = knox_split_close(t->root, leaf, &new_root);
+            t->root = new_root;
+            if (next_p)
+                t->active_pane = next_p;
+            app_set_status(app, "Closed split pane");
+        } else if (app->tab_count > 1) {
+            knox_split_free_tree(t->root);
+            for (size_t i = app->active_tab; i + 1 < app->tab_count; i++)
+                app->tabs[i] = app->tabs[i + 1];
+            app->tab_count--;
+            if (app->active_tab >= app->tab_count)
+                app->active_tab = app->tab_count - 1;
+            app_set_status(app, "Closed tab");
+        } else {
+            app_set_status(app, "Cannot close the last open tab (press Ctrl+Q to quit)");
+        }
+    } else if (strcmp(widget, "toggle-render-mode") == 0) {
+        knox_pane_t *ap = app_active_pane(app);
+        if (ap && ap->content == KNOX_PANE_VIEWER) {
+            knox_viewer_toggle_render(&ap->doc, ap->w > 4 ? ap->w - 2 : 72,
+                                      app->opts.ascii);
+            app_set_status(app, "Switched to %s mode",
+                           ap->doc.render_mode ? "Rendered" : "Raw Syntax");
+        }
+    } else if (strcmp(widget, "cycle-branch-filter") == 0) {
+        knox_pane_t *ap = app_active_pane(app);
+        if (ap && ap->content == KNOX_PANE_GRAPH) {
+            ap->graph_all_branches = !ap->graph_all_branches;
+            app_ensure_repo_graph(app, ap->repo_idx, ap->graph_all_branches,
+                                  ap->graph_show_remotes, true);
+            app_set_status(app, "Git Graph branches: %s",
+                           ap->graph_all_branches ? "Show All" : "Current (HEAD)");
+        }
+    } else if (strcmp(widget, "repo-sync") == 0) {
+        if (app->active_repo_idx >= app->ws.count)
+            return;
+        knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+        char summary[256] = "";
+        int rc = knox_repo_sync(repo, false, summary, sizeof(summary));
+        app_set_status(app, "%s", summary);
+        if (rc == 1) {
+            app->modal = MODAL_CONFIRM_SYNC;
+        } else {
+            app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
+            knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+        }
+    } else if (strcmp(widget, "commit-prompt") == 0) {
+        if (app->active_repo_idx >= app->ws.count)
+            return;
+        knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+        if (repo->staged_count == 0) {
+            app_set_status(app, "%s: no staged files (press Space on a file in Changes to stage)",
+                           repo->name);
+            return;
+        }
+        app->modal = MODAL_COMMIT;
+        app->prompt_buf[0] = '\0';
+        app->prompt_len = 0;
+    } else if (strcmp(widget, "find") == 0) {
+        app->modal = MODAL_SEARCH;
+        app->prompt_buf[0] = '\0';
+        app->prompt_len = 0;
+    } else if (strcmp(widget, "find-next") == 0 ||
+               strcmp(widget, "find-prev") == 0) {
+        bool fwd = (strcmp(widget, "find-next") == 0);
+        knox_pane_t *ap = app_active_pane(app);
+        if (ap && ap->content == KNOX_PANE_VIEWER)
+            knox_viewer_search(&ap->doc, NULL, fwd, true);
+    } else if (strcmp(widget, "update") == 0) {
+        for (size_t i = 0; i < app->ws.count; i++)
+            knox_repo_refresh_status(&app->ws.repos[i]);
+        knox_explorer_rebuild(&app->explorer, &app->ws);
+        if (app->active_repo_idx < app->ws.count)
+            app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
+        app_set_status(app, "Refreshed all %zu repositories", app->ws.count);
+    } else if (strcmp(widget, "open-in-editor") == 0) {
+        app_open_in_external_editor(app);
+    } else if (strcmp(widget, "copy") == 0) {
+        knox_pane_t *ap = app_active_pane(app);
+        if (app->focus == FOCUS_MAIN_PANE && ap) {
+            if (ap->content == KNOX_PANE_GRAPH &&
+                ap->graph_cursor < app->graph.commit_count) {
+                app_copy_to_clipboard(app, app->graph.commits[ap->graph_cursor].hash);
+            } else if (ap->content == KNOX_PANE_VIEWER && ap->doc.abs_path) {
+                app_copy_to_clipboard(app, ap->doc.abs_path);
+            }
+        } else if (app->focus == FOCUS_SIDEBAR_REPOS &&
+                   app->active_repo_idx < app->ws.count) {
+            app_copy_to_clipboard(app, app->ws.repos[app->active_repo_idx].root_path);
+        }
+    } else if (strcmp(widget, "stage-or-page-down") == 0) {
+        if (app->focus == FOCUS_SIDEBAR_CHANGES &&
+            app->active_repo_idx < app->ws.count) {
+            knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+            if (app->change_cursor < repo->change_count) {
+                knox_file_change_t *fc = &repo->changes[app->change_cursor];
+                char err[256] = "";
+                char *path_copy = strdup(fc->path);
+                bool was_staged = fc->staged && !fc->unstaged;
+                int rc = was_staged
+                         ? knox_repo_unstage_file(repo, path_copy, err, sizeof(err))
+                         : knox_repo_stage_file(repo, path_copy, err, sizeof(err));
+                if (rc == 0) {
+                    app_set_status(app, "%s %s in %s",
+                                   was_staged ? "Unstaged" : "Staged",
+                                   path_copy, repo->name);
+                    knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+                } else {
+                    app_set_status(app, "Error: %s", err);
+                }
+                free(path_copy);
+            }
+        } else {
+            knox_pane_t *ap = app_active_pane(app);
+            int step = (ap && ap->h > 3) ? ap->h - 2 : 10;
+            app_move_selection(app, step);
+        }
+    } else if (strcmp(widget, "open-or-inspect") == 0) {
+        if (app->focus == FOCUS_SIDEBAR_REPOS) {
+            if (app->active_repo_idx < app->ws.count) {
+                app_execute_widget(app, "view-graph");
+                knox_pane_t *ap = app_active_pane(app);
+                if (ap && ap->content == KNOX_PANE_GRAPH) {
+                    ap->repo_idx = app->active_repo_idx;
+                    ap->graph_cursor = 0;
+                    ap->graph_top = 0;
+                    app_ensure_repo_graph(app, app->active_repo_idx,
+                                          ap->graph_all_branches,
+                                          ap->graph_show_remotes, true);
+                }
+            }
+        } else if (app->focus == FOCUS_SIDEBAR_CHANGES) {
+            if (app->active_repo_idx < app->ws.count) {
+                const knox_repo_t *repo = &app->ws.repos[app->active_repo_idx];
+                if (app->change_cursor < repo->change_count) {
+                    const knox_file_change_t *fc = &repo->changes[app->change_cursor];
+                    char *diff = knox_repo_diff_working_file(repo, fc);
+                    char title[64], bc[256];
+                    snprintf(title, sizeof(title), "Diff %s", fc->path);
+                    snprintf(bc, sizeof(bc), "%s > %s (Working Tree Diff)",
+                             repo->name, fc->path);
+                    app_open_diff_in_pane_or_tab(app, title, repo->name, bc, diff);
+                }
+            }
+        } else if (app->focus == FOCUS_SIDEBAR_EXPLORER) {
+            if (app->explorer_cursor < app->explorer.flat_count) {
+                knox_tree_node_t *n = app->explorer.flat[app->explorer_cursor];
+                if (n->is_dir)
+                    knox_explorer_toggle_node(&app->explorer, app->explorer_cursor, &app->ws);
+                else
+                    app_open_file_in_tab(app, n->abs_path);
+            }
+        } else if (app->focus == FOCUS_MAIN_PANE) {
+            knox_pane_t *ap = app_active_pane(app);
+            if (!ap)
+                return;
+            if (ap->content == KNOX_PANE_GRAPH) {
+                app_inspect_commit_in_split(app, ap);
+            } else if (ap->content == KNOX_PANE_COMMIT_DETAIL) {
+                if (ap->repo_idx < app->ws.count &&
+                    ap->inspect_file_cursor < app->details.file_count) {
+                    const knox_repo_t *repo = &app->ws.repos[ap->repo_idx];
+                    const char *rel = app->details.files[ap->inspect_file_cursor].path;
+                    char *diff = knox_repo_diff_commit_file(repo, app->details.hash, rel);
+                    char title[64], bc[256];
+                    snprintf(title, sizeof(title), "%.7s:%s", app->details.hash, rel);
+                    snprintf(bc, sizeof(bc), "%s > commit %.8s > %s",
+                             repo->name, app->details.hash, rel);
+                    app_open_diff_in_pane_or_tab(app, title, repo->name, bc, diff);
+                }
+            }
+        }
+    }
+}
+
+static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
+{
+    if (ev->type == TAM_KEY_ESC ||
+        (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL) &&
+         (ev->codepoint == '\\' || ev->codepoint == 'g' || ev->codepoint == 'G'))) {
+        app->modal = MODAL_NONE;
+        return;
+    }
+
+    if (app->modal == MODAL_CONFIRM_SYNC) {
+        if (ev->type == TAM_KEY_CHAR &&
+            (ev->codepoint == 'y' || ev->codepoint == 'Y')) {
+            app->modal = MODAL_NONE;
+            if (app->active_repo_idx < app->ws.count) {
+                char summary[256] = "";
+                knox_repo_sync(&app->ws.repos[app->active_repo_idx],
+                               true, summary, sizeof(summary));
+                app_set_status(app, "%s", summary);
+                app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
+            }
+        } else {
+            app->modal = MODAL_NONE;
+            app_set_status(app, "Cancelled protected branch push");
+        }
+        return;
+    }
+
+    if (app->modal == MODAL_GUIDANCE) {
+        if (ev->type == TAM_KEY_CHAR &&
+            (ev->codepoint == 'q' || ev->codepoint == 'Q'))
+            app->modal = MODAL_NONE;
+        return;
+    }
+
+    if (app->modal == MODAL_PALETTE) {
+        if (ev->type == TAM_KEY_TAB) {
+            /* Standalone TERM=linux modifier cycling in chord composer */
+            if (app->chord_mods == 0)
+                app->chord_mods = TAM_MOD_CTRL;
+            else if (app->chord_mods == TAM_MOD_CTRL)
+                app->chord_mods = TAM_MOD_ALT;
+            else if (app->chord_mods == TAM_MOD_ALT)
+                app->chord_mods = TAM_MOD_SHIFT;
+            else if (app->chord_mods == TAM_MOD_SHIFT)
+                app->chord_mods = TAM_MOD_CTRL | TAM_MOD_SHIFT;
+            else if (app->chord_mods == (TAM_MOD_CTRL | TAM_MOD_SHIFT))
+                app->chord_mods = TAM_MOD_ALT | TAM_MOD_SHIFT;
+            else
+                app->chord_mods = 0;
+            return;
+        }
+        if (ev->type == TAM_KEY_UP) {
+            if (app->palette_cursor > 0)
+                app->palette_cursor--;
+            return;
+        }
+        if (ev->type == TAM_KEY_DOWN) {
+            app->palette_cursor++;
+            return;
+        }
+        if (ev->type == TAM_KEY_ENTER) {
+            size_t m = 0;
+            for (size_t i = 0; i < WIDGET_COUNT; i++) {
+                if (app->prompt_len == 0 ||
+                    strcasestr(WIDGET_TABLE[i].name, app->prompt_buf) ||
+                    strcasestr(WIDGET_TABLE[i].desc, app->prompt_buf) ||
+                    strcasestr(WIDGET_TABLE[i].keys, app->prompt_buf)) {
+                    if (m == app->palette_cursor) {
+                        app->modal = MODAL_NONE;
+                        app_execute_widget(app, WIDGET_TABLE[i].name);
+                        return;
+                    }
+                    m++;
+                }
+            }
+            app->modal = MODAL_NONE;
+            return;
+        }
+    }
+
+    /* Text editing inside MODAL_SEARCH, MODAL_COMMIT, or MODAL_PALETTE */
+    if (ev->type == TAM_KEY_BACKSPACE) {
+        if (app->prompt_len == 0 && app->modal == MODAL_PALETTE) {
+            app->modal = MODAL_NONE;
+            return;
+        }
+        if (app->prompt_len > 0)
+            app->prompt_buf[--app->prompt_len] = '\0';
+        return;
+    }
+    if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL) &&
+        (ev->codepoint == 'k' || ev->codepoint == 'K')) {
+        app->prompt_len = 0;
+        app->prompt_buf[0] = '\0';
+        return;
+    }
+    if (ev->type == TAM_KEY_ENTER) {
+        if (app->modal == MODAL_COMMIT) {
+            app->modal = MODAL_NONE;
+            if (app->active_repo_idx < app->ws.count) {
+                char summary[256] = "";
+                knox_repo_commit_staged(&app->ws.repos[app->active_repo_idx],
+                                        app->prompt_buf, summary, sizeof(summary));
+                app_set_status(app, "%s", summary);
+                app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
+                knox_explorer_refresh_git_status(&app->explorer, &app->ws);
+            }
+            return;
+        } else if (app->modal == MODAL_SEARCH) {
+            app->modal = MODAL_NONE;
+            if (app->prompt_len == 0)
+                return;
+            knox_pane_t *ap = app_active_pane(app);
+            if (app->focus == FOCUS_MAIN_PANE && ap &&
+                ap->content == KNOX_PANE_VIEWER) {
+                if (!knox_viewer_search(&ap->doc, app->prompt_buf, true, false))
+                    app_set_status(app, "No match for '%s'", app->prompt_buf);
+            } else if (app->focus == FOCUS_MAIN_PANE && ap &&
+                       ap->content == KNOX_PANE_GRAPH) {
+                for (size_t i = 0; i < app->graph.commit_count; i++) {
+                    size_t idx = (ap->graph_cursor + 1 + i) % app->graph.commit_count;
+                    const knox_commit_t *c = &app->graph.commits[idx];
+                    if ((c->subject && strcasestr(c->subject, app->prompt_buf)) ||
+                        (c->author && strcasestr(c->author, app->prompt_buf)) ||
+                        strncasecmp(c->hash, app->prompt_buf, app->prompt_len) == 0) {
+                        ap->graph_cursor = idx;
+                        return;
+                    }
+                }
+                app_set_status(app, "No commit matching '%s'", app->prompt_buf);
+            } else if (app->focus == FOCUS_SIDEBAR_REPOS) {
+                for (size_t i = 0; i < app->ws.count; i++) {
+                    if (strcasestr(app->ws.repos[i].name, app->prompt_buf)) {
+                        app->active_repo_idx = i;
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+    }
+    if (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
+        ev->codepoint >= 0x20 && ev->codepoint < 0x7f) {
+        if (app->prompt_len + 1 < sizeof(app->prompt_buf)) {
+            app->prompt_buf[app->prompt_len++] = (char)ev->codepoint;
+            app->prompt_buf[app->prompt_len] = '\0';
+        }
+    }
+}
+
+static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
+{
+    if (app->modal != MODAL_NONE) {
+        handle_modal_key(app, ev);
+        return;
+    }
+
+    /* 1. Universal Ctrl map (from tamlinux/arch/keybindings.md) */
+    if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL)) {
+        uint32_t c = tolower((unsigned char)ev->codepoint);
+        switch (c) {
+        case 'q': app_execute_widget(app, "quit"); return;
+        case 'g': app_execute_widget(app, "guidance"); return;
+        case 'e': app_execute_widget(app, "execute"); return;
+        case 'f': app_execute_widget(app, "find"); return;
+        case 'u': app_execute_widget(app, "update"); return;
+        case 'd': app_execute_widget(app, "close"); return;
+        case 'n': app_execute_widget(app, "new"); return;
+        case 'c': app_execute_widget(app, "copy"); return;
+        case 's': app_execute_widget(app, "commit-prompt"); return;
+        case 'l': return; /* Redraws at end of loop */
+        default:  return; /* No double-acting Ctrl codes */
+        }
+    }
+
+    /* 2. Alt chords */
+    if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_ALT)) {
+        uint32_t c = tolower((unsigned char)ev->codepoint);
+        switch (c) {
+        case '1': app_execute_widget(app, "view-source-control"); return;
+        case '2': app_execute_widget(app, "view-explorer"); return;
+        case '3': app_execute_widget(app, "view-graph"); return;
+        case 'b': app_execute_widget(app, "toggle-sidebar"); return;
+        case 's': app_execute_widget(app, "repo-sync"); return;
+        case 'c': app_execute_widget(app, "commit-prompt"); return;
+        case 'e': app_execute_widget(app, "open-in-editor"); return;
+        case 'v': app_execute_widget(app, "split-vertical"); return;
+        case 'h': app_execute_widget(app, "split-horizontal"); return;
+        case 'w': app_execute_widget(app, "focus-other-pane"); return;
+        case 'r': app_execute_widget(app, "toggle-render-mode"); return;
+        case 'f': app_execute_widget(app, "cycle-branch-filter"); return;
+        case ',': app_execute_widget(app, "tab-prev"); return;
+        case '.': app_execute_widget(app, "tab-next"); return;
+        case '<': app_move_selection(app, -100000); return;
+        case '>': app_move_selection(app, 100000); return;
+        default:  return;
+        }
+    }
+
+    /* 3. Navigation & Single-key read-only bindings */
+    switch (ev->type) {
+    case TAM_KEY_TAB:
+        app_execute_widget(app, (ev->mods & TAM_MOD_SHIFT) ? "focus-prev" : "focus-next");
+        return;
+    case TAM_KEY_UP:
+        app_move_selection(app, -1);
+        return;
+    case TAM_KEY_DOWN:
+        app_move_selection(app, 1);
+        return;
+    case TAM_KEY_PAGE_UP:
+        app_move_selection(app, -12);
+        return;
+    case TAM_KEY_PAGE_DOWN:
+        app_move_selection(app, 12);
+        return;
+    case TAM_KEY_HOME:
+        app_move_selection(app, -100000);
+        return;
+    case TAM_KEY_END:
+        app_move_selection(app, 100000);
+        return;
+    case TAM_KEY_LEFT:
+        if (app->focus == FOCUS_MAIN_PANE) {
+            knox_pane_t *ap = app_active_pane(app);
+            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode) {
+                if (ap->doc.left_col >= 4)
+                    ap->doc.left_col -= 4;
+                else
+                    ap->doc.left_col = 0;
+            }
+        }
+        return;
+    case TAM_KEY_RIGHT:
+        if (app->focus == FOCUS_MAIN_PANE) {
+            knox_pane_t *ap = app_active_pane(app);
+            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+                ap->doc.left_col += 4;
+        }
+        return;
+    case TAM_KEY_ENTER:
+        app_execute_widget(app, "open-or-inspect");
+        return;
+    case TAM_KEY_ESC:
+        app->status_msg[0] = '\0';
+        return;
+    case TAM_KEY_CHAR:
+        switch (ev->codepoint) {
+        case 'q':
+        case 'Q':
+            app_execute_widget(app, "quit");
+            return;
+        case 'j':
+            app_move_selection(app, 1);
+            return;
+        case 'k':
+            app_move_selection(app, -1);
+            return;
+        case ' ':
+            app_execute_widget(app, "stage-or-page-down");
+            return;
+        case 'b':
+            app_move_selection(app, -12);
+            return;
+        case 'B':
+            app_execute_widget(app, "cycle-branch-filter");
+            return;
+        case 'r':
+        case 'R':
+            app_execute_widget(app, "toggle-render-mode");
+            return;
+        case '/':
+            app_execute_widget(app, "find");
+            return;
+        case 'n':
+            app_execute_widget(app, "find-next");
+            return;
+        case 'N':
+            app_execute_widget(app, "find-prev");
+            return;
+        case 'v':
+            /* In commit detail inspector, 'v' views the full file snapshot at that commit */
+            if (app->focus == FOCUS_MAIN_PANE) {
+                knox_pane_t *ap = app_active_pane(app);
+                if (ap && ap->content == KNOX_PANE_COMMIT_DETAIL &&
+                    ap->repo_idx < app->ws.count &&
+                    ap->inspect_file_cursor < app->details.file_count) {
+                    const knox_repo_t *repo = &app->ws.repos[ap->repo_idx];
+                    const char *rel = app->details.files[ap->inspect_file_cursor].path;
+                    char *snap = knox_repo_show_commit_file(repo, app->details.hash, rel);
+                    if (snap) {
+                        char title[64], bc[256];
+                        snprintf(title, sizeof(title), "%s@%.7s", rel, app->details.hash);
+                        snprintf(bc, sizeof(bc), "%s > %s (at %.8s)",
+                                 repo->name, rel, app->details.hash);
+                        knox_pane_t *vp = knox_pane_new(KNOX_PANE_VIEWER, ap->repo_idx);
+                        if (vp) {
+                            knox_lang_t lang = knox_syntax_detect(rel, snap, strlen(snap));
+                            knox_viewer_open_buffer(&vp->doc, KNOX_DOC_FILE,
+                                                    title, repo->name, bc,
+                                                    snap, strlen(snap), lang);
+                            app_add_tab(app, title, vp);
+                        }
+                        free(snap);
+                    }
+                }
+            }
+            return;
+        default:
+            return;
+        }
+    default:
+        return;
+    }
+}
+
+/* ========================================================================= */
+/* Public Entry Points                                                       */
+/* ========================================================================= */
+
+int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
+{
+    knox_app_t app = {0};
+    app.opts = opts;
+    app.sidebar_visible = true;
+    app.sidebar_mode = SIDEBAR_SOURCE_CONTROL;
+    app.focus = FOCUS_SIDEBAR_REPOS;
+    app.running = true;
+
+    if (tam_tty_open(&app.tty, STDIN_FILENO, STDOUT_FILENO) != 0) {
+        fprintf(stderr, "tam-knox: standard input and output must be a terminal\n");
+        return 1;
+    }
+
+    knox_workspace_init(&app.ws, workspace_dir);
+    knox_discover_repos(&app.ws, 2);
+    knox_explorer_init(&app.explorer, app.ws.root_path, false);
+    knox_explorer_refresh_git_status(&app.explorer, &app.ws);
+    knox_graph_init(&app.graph);
+
+    knox_pane_t *graph_pane = knox_pane_new(KNOX_PANE_GRAPH, 0);
+    app_add_tab(&app, "Git Graph", graph_pane);
+    if (app.ws.count > 0)
+        app_ensure_repo_graph(&app, 0, true, true, true);
+
+    struct sigaction sa = {0};
+    sa.sa_handler = sigwinch_handler;
+    sigaction(SIGWINCH, &sa, NULL);
+
+    tam_tty_raw(&app.tty, true);
+    tam_tty_alt_screen(&app.tty, true);
+    tam_tty_cursor_visible(&app.tty, false);
+    tam_tty_paste(&app.tty, true);
+    tam_key_init(&app.keys);
+
+    app_draw(&app);
+
+    unsigned char inbuf[256];
+    while (app.running) {
+        if (g_winch_flag) {
+            g_winch_flag = 0;
+            tam_tty_size(&app.tty, NULL, NULL);
+            app_draw(&app);
+        }
+
+        int n = tam_tty_read(&app.tty, inbuf, sizeof(inbuf), 50);
+        if (n < 0)
+            break;
+        if (n == 0) {
+            tam_key_event_t tev;
+            if (tam_key_timeout(&app.keys, &tev) == 1) {
+                handle_key_event(&app, &tev);
+                app_draw(&app);
+            }
+            continue;
+        }
+
+        tam_key_feed(&app.keys, inbuf, (size_t)n);
+        tam_key_event_t ev;
+        bool handled = false;
+        while (tam_key_next(&app.keys, &ev) == 1) {
+            handle_key_event(&app, &ev);
+            handled = true;
+        }
+        if (handled)
+            app_draw(&app);
+    }
+
+    tam_tty_close(&app.tty);
+
+    for (size_t i = 0; i < app.tab_count; i++)
+        knox_split_free_tree(app.tabs[i].root);
+    knox_commit_details_free(&app.details);
+    knox_graph_free(&app.graph);
+    knox_explorer_free(&app.explorer);
+    knox_workspace_free(&app.ws);
+    return 0;
+}
+
+int knox_print_status_table(const char *workspace_dir, knox_options_t opts)
+{
+    knox_workspace_t ws;
+    knox_workspace_init(&ws, workspace_dir);
+    knox_discover_repos(&ws, 2);
+
+    printf("%-28s %-14s %-10s %-10s %s\n",
+           "REPOSITORY", "BRANCH", "STATE", "SYNC", "CHANGED FILES");
+    printf("%-28s %-14s %-10s %-10s %s\n",
+           "----------------------------", "--------------",
+           "----------", "----------", "-------------");
+
+    for (size_t i = 0; i < ws.count; i++) {
+        const knox_repo_t *r = &ws.repos[i];
+        char sync[32];
+        if (r->ahead > 0 || r->behind > 0)
+            snprintf(sync, sizeof(sync), "+%d/-%d", r->ahead, r->behind);
+        else
+            snprintf(sync, sizeof(sync), "synced");
+
+        tam_str_t files = tam_str_new("");
+        for (size_t c = 0; c < r->change_count && c < 5; c++) {
+            if (c > 0)
+                files = tam_str_cat(files, ", ");
+            files = tam_str_cat(files, r->changes[c].path);
+        }
+        if (r->change_count > 5)
+            files = tam_str_cat_printf(files, " (+%zu more)", r->change_count - 5);
+
+        if (opts.color) {
+            printf("%-28s \033[36m%-14s\033[0m %s%-10s\033[0m %-10s %s\n",
+                   r->name,
+                   r->branch ? r->branch : "?",
+                   r->dirty ? "\033[33m" : "\033[32m",
+                   r->dirty ? "dirty" : "clean",
+                   sync,
+                   r->dirty ? files : "-");
+        } else {
+            printf("%-28s %-14s %-10s %-10s %s\n",
+                   r->name,
+                   r->branch ? r->branch : "?",
+                   r->dirty ? "dirty" : "clean",
+                   sync,
+                   r->dirty ? files : "-");
+        }
+        tam_str_free(files);
+    }
+
+    knox_workspace_free(&ws);
+    return 0;
+}
+
+int knox_print_repo_graph(const char *repo_dir, size_t max_commits,
+                          knox_options_t opts)
+{
+    knox_workspace_t ws;
+    knox_workspace_init(&ws, repo_dir);
+    knox_discover_repos(&ws, 1);
+    if (ws.count == 0) {
+        fprintf(stderr, "tam-knox: no Git repository found at %s\n", repo_dir);
+        knox_workspace_free(&ws);
+        return 1;
+    }
+
+    knox_graph_t g;
+    knox_graph_init(&g);
+    if (knox_repo_load_graph(&ws.repos[0], &g, max_commits ? max_commits : 30,
+                             true, true, opts.ascii) != 0) {
+        knox_graph_free(&g);
+        knox_workspace_free(&ws);
+        return 1;
+    }
+
+    for (size_t i = 0; i < g.commit_count; i++) {
+        const knox_commit_t *c = &g.commits[i];
+        char gcells[512];
+        int gvis = 0;
+        knox_graph_format_row(&g, i, 24, opts.color, opts.linux_vt,
+                              gcells, sizeof(gcells), &gvis);
+        char date_str[32];
+        format_commit_date(c->timestamp, date_str, sizeof(date_str));
+
+        printf("%s ", gcells);
+        for (size_t h = 0; h < c->head_count; h++)
+            printf("[%s] ", c->heads[h]);
+        for (size_t rm = 0; rm < c->remote_count; rm++)
+            printf("[%s] ", c->remotes[rm]);
+        for (size_t t = 0; t < c->tag_count; t++)
+            printf("[tag: %s] ", c->tags[t]);
+        printf("%s  (%s, %s, %.8s)\n",
+               c->subject ? c->subject : "",
+               date_str,
+               c->author ? c->author : "",
+               c->hash);
+    }
+
+    knox_graph_free(&g);
+    knox_workspace_free(&ws);
+    return 0;
+}
