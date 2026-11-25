@@ -556,20 +556,68 @@ static void app_open_in_external_editor(knox_app_t *app)
 /* Rendering: Top Bar, Sidebar, Panes, Modals, and Footer                    */
 /* ========================================================================= */
 
+/* High-contrast SGR helpers tailored for both 256-color tam-last and 16-color
+ * TERM=linux consoles. In tam-last, ANSI 4 (blue) is a light pastel periwinkle
+ * and ANSI 8 (90m) is a very dark slate, so we use explicit 256-color pure
+ * white (231) on deep navy (24) / charcoal (237) for selections and headers,
+ * and bright silver (250/247) for secondary metadata. */
+static const char *sgr_header_focused(const knox_app_t *app)
+{
+    if (!app->opts.color)
+        return "\033[7m";
+    return app->opts.linux_vt ? "\033[1;30;46m" : "\033[1;38;5;16;46m";
+}
+
+static const char *sgr_header_unfocused(const knox_app_t *app)
+{
+    if (!app->opts.color)
+        return "";
+    return app->opts.linux_vt ? "\033[1;37;40m" : "\033[1;38;5;231;48;5;237m";
+}
+
+static const char *sgr_row_selected(const knox_app_t *app, bool zone_focused)
+{
+    if (!app->opts.color)
+        return "\033[7m";
+    if (app->opts.linux_vt)
+        return zone_focused ? "\033[1;37;44m" : "\033[7m";
+    return zone_focused
+           ? "\033[1;38;5;231;48;5;24m"   /* Bold pure white #ffffff on deep blue #005f87 */
+           : "\033[1;38;5;231;48;5;238m"; /* Bold pure white #ffffff on dark slate #444444 */
+}
+
+static const char *sgr_muted(const knox_app_t *app)
+{
+    if (!app->opts.color)
+        return "";
+    return app->opts.linux_vt ? "\033[37m" : "\033[38;5;248m";
+}
+
 static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 {
     const char *ws_base = strrchr(app->ws.root_path, '/');
     ws_base = (ws_base && ws_base[1]) ? ws_base + 1 : app->ws.root_path;
 
+    const char *bar_bg = (app->opts.color && !app->opts.linux_vt)
+                         ? "\033[38;5;254;48;5;236m" : "\033[7m";
+    const char *act_mode_sgr = app->opts.linux_vt
+                               ? "\033[1;33m" : "\033[1;38;5;228;48;5;236m";
+    const char *inact_mode_sgr = app->opts.linux_vt
+                                 ? "\033[37m" : "\033[38;5;250;48;5;236m";
+
     tam_str_t bar = tam_str_new("");
     if (app->opts.color) {
         bar = tam_str_cat_printf(bar,
-            " \033[1;36mtam-knox\033[0m\033[48;5;236m \033[1m%s\033[0m\033[48;5;236m (%zu repos) ",
-            ws_base, app->ws.count);
+            " \033[1;36;48;5;236mtam-knox\033[0m%s \033[1;38;5;231;48;5;236m%s\033[0m%s (%zu repos) ",
+            bar_bg, ws_base, bar_bg, app->ws.count);
         bar = tam_str_cat_printf(bar,
-            "%s[Alt+1 Source Control]\033[0m\033[48;5;236m %s[Alt+2 Explorer]\033[0m\033[48;5;236m | ",
-            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) ? "\033[1;33m" : "\033[90m",
-            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER) ? "\033[1;33m" : "\033[90m");
+            "%s[Alt+1 Source Control]\033[0m%s %s[Alt+2 Explorer]\033[0m%s | ",
+            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_SOURCE_CONTROL)
+                ? act_mode_sgr : inact_mode_sgr,
+            bar_bg,
+            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER)
+                ? act_mode_sgr : inact_mode_sgr,
+            bar_bg);
     } else {
         bar = tam_str_cat_printf(bar, " tam-knox %s (%zu repos) [%s] | ",
             ws_base, app->ws.count,
@@ -579,17 +627,16 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
     for (size_t i = 0; i < app->tab_count; i++) {
         bool act = (i == app->active_tab);
         if (app->opts.color) {
-            bar = tam_str_cat_printf(bar, "%s %zu:%s \033[0m\033[48;5;236m ",
-                act ? "\033[1;30;46m" : "\033[37;48;5;238m",
-                i + 1, app->tabs[i].title);
+            bar = tam_str_cat_printf(bar, "%s %zu:%s \033[0m%s ",
+                act ? sgr_header_focused(app) : "\033[1;38;5;252;48;5;238m",
+                i + 1, app->tabs[i].title, bar_bg);
         } else {
             bar = tam_str_cat_printf(bar, "%s%zu:%s%s ",
                 act ? "[" : " ", i + 1, app->tabs[i].title, act ? "]" : " ");
         }
     }
 
-    const char *bg = (app->opts.color && !app->opts.linux_vt) ? "\033[48;5;236m" : "\033[7m";
-    frame_move_write(frame, 1, 1, bar, cols, app->opts.color ? bg : "", true);
+    frame_move_write(frame, 1, 1, bar, cols, app->opts.color ? bar_bg : "", true);
     tam_str_free(bar);
 }
 
@@ -609,10 +656,23 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
         char hdr[256];
         snprintf(hdr, sizeof(hdr), " %s REPOSITORIES (%zu) [Alt+S Sync]",
                  bx->arrow_d, app->ws.count);
-        const char *hdr_sgr = app->opts.color
-                              ? (focus_repos ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                              : (focus_repos ? "\033[7m" : "");
+        const char *hdr_sgr = focus_repos
+                              ? sgr_header_focused(app)
+                              : sgr_header_unfocused(app);
         frame_move_write(frame, y, x, hdr, w, hdr_sgr, true);
+
+        /* Compute widest repo name so names like config-fred-tamlinux fit */
+        int name_col_w = 18;
+        for (size_t i = 0; i < app->ws.count; i++) {
+            int nlen = (int)strlen(app->ws.repos[i].name);
+            if (nlen > name_col_w)
+                name_col_w = nlen;
+        }
+        int max_name_w = w - 14;
+        if (max_name_w < 14)
+            max_name_w = 14;
+        if (name_col_w > max_name_w)
+            name_col_w = max_name_w;
 
         /* Repositories rows */
         int list_rows = repos_h - 1;
@@ -646,21 +706,18 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                 char line[512];
                 if (app->opts.color && !sel) {
                     snprintf(line, sizeof(line),
-                             " %-16.16s \033[36m%s\033[0m\033[33m%s\033[0m\033[35m%s\033[0m",
-                             repo->name, repo->branch ? repo->branch : "?",
+                             " %-*.*s \033[1;36m%s\033[0m\033[1;33m%s\033[0m\033[1;35m%s\033[0m",
+                             name_col_w, name_col_w, repo->name,
+                             repo->branch ? repo->branch : "?",
                              dirty_badge, sync_badge);
                 } else {
-                    snprintf(line, sizeof(line), " %-16.16s %s%s%s",
-                             repo->name, repo->branch ? repo->branch : "?",
+                    snprintf(line, sizeof(line), " %-*.*s %s%s%s",
+                             name_col_w, name_col_w, repo->name,
+                             repo->branch ? repo->branch : "?",
                              dirty_badge, sync_badge);
                 }
 
-                const char *row_bg = "";
-                if (sel) {
-                    row_bg = app->opts.color
-                             ? (focus_repos ? "\033[1;37;44m" : "\033[48;5;238m")
-                             : "\033[7m";
-                }
+                const char *row_bg = sel ? sgr_row_selected(app, focus_repos) : "";
                 frame_move_write(frame, row_y, x, line, w, row_bg, true);
             }
         }
@@ -675,9 +732,9 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                  bx->arrow_d,
                  act_repo ? act_repo->name : "-",
                  act_repo ? act_repo->change_count : 0);
-        const char *chdr_sgr = app->opts.color
-                               ? (focus_chg ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                               : (focus_chg ? "\033[7m" : "");
+        const char *chdr_sgr = focus_chg
+                               ? sgr_header_focused(app)
+                               : sgr_header_unfocused(app);
         frame_move_write(frame, cy, x, hdr, w, chdr_sgr, true);
 
         int chg_rows = changes_h - 1;
@@ -697,7 +754,7 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                     if (r == 0 && ccount == 0) {
                         frame_move_write(frame, row_y, x,
                                          "   (working tree clean)", w,
-                                         app->opts.color ? "\033[90m" : "", true);
+                                         sgr_muted(app), true);
                     } else {
                         frame_move_write(frame, row_y, x, "", w, "", true);
                     }
@@ -711,21 +768,16 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                 const char *box = fc->staged ? "[+]" : "[ ]";
                 char line[512];
                 if (app->opts.color && !sel) {
-                    const char *sc = (st_let == 'M') ? "\033[33m" :
-                                     (st_let == 'A') ? "\033[32m" :
-                                     (st_let == 'D') ? "\033[31m" : "\033[36m";
+                    const char *sc = (st_let == 'M') ? "\033[1;33m" :
+                                     (st_let == 'A') ? "\033[1;32m" :
+                                     (st_let == 'D') ? "\033[1;31m" : "\033[1;36m";
                     snprintf(line, sizeof(line), " %s %s%c\033[0m %s",
                              box, sc, st_let, fc->path);
                 } else {
                     snprintf(line, sizeof(line), " %s %c %s",
                              box, st_let, fc->path);
                 }
-                const char *row_bg = "";
-                if (sel) {
-                    row_bg = app->opts.color
-                             ? (focus_chg ? "\033[1;37;44m" : "\033[48;5;238m")
-                             : "\033[7m";
-                }
+                const char *row_bg = sel ? sgr_row_selected(app, focus_chg) : "";
                 frame_move_write(frame, row_y, x, line, w, row_bg, true);
             }
         }
@@ -735,9 +787,9 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
         char hdr[256];
         snprintf(hdr, sizeof(hdr), " %s EXPLORER (%zu items)",
                  bx->arrow_d, app->explorer.flat_count);
-        const char *hdr_sgr = app->opts.color
-                              ? (focus_exp ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                              : (focus_exp ? "\033[7m" : "");
+        const char *hdr_sgr = focus_exp
+                              ? sgr_header_focused(app)
+                              : sgr_header_unfocused(app);
         frame_move_write(frame, y, x, hdr, w, hdr_sgr, true);
 
         int rows = h - 1;
@@ -785,9 +837,9 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
 
                 char line[512];
                 if (app->opts.color && !sel) {
-                    const char *nc = n->is_dir ? "\033[1;34m" : "";
+                    const char *nc = n->is_dir ? "\033[1;36m" : "";
                     const char *tc = (n->git_status != KNOX_CHANGE_NONE || n->has_dirty_desc)
-                                     ? "\033[33m" : "";
+                                     ? "\033[1;33m" : "";
                     snprintf(line, sizeof(line), " %s%s%s%s%s\033[0m%s%s\033[0m",
                              indent, marker, nc, n->name,
                              n->is_dir ? "/" : "", tc, status_tail);
@@ -797,12 +849,7 @@ static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                              n->is_dir ? "/" : "", status_tail);
                 }
 
-                const char *row_bg = "";
-                if (sel) {
-                    row_bg = app->opts.color
-                             ? (focus_exp ? "\033[1;37;44m" : "\033[48;5;238m")
-                             : "\033[7m";
-                }
+                const char *row_bg = sel ? sgr_row_selected(app, focus_exp) : "";
                 frame_move_write(frame, row_y, x, line, w, row_bg, true);
             }
         }
@@ -847,9 +894,9 @@ static void render_graph_pane(knox_app_t *app, knox_pane_t *p,
              repo->name, repo->branch ? repo->branch : "?",
              p->graph_all_branches ? "Show All" : "Current (HEAD)",
              app->graph.commit_count);
-    const char *hdr_sgr = app->opts.color
-                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                          : (is_focused ? "\033[7m" : "");
+    const char *hdr_sgr = is_focused
+                          ? sgr_header_focused(app)
+                          : sgr_header_unfocused(app);
     frame_move_write(frame, p->y, p->x, ctrl, p->w, hdr_sgr, true);
     if (p->h < 2)
         return;
@@ -871,8 +918,10 @@ static void render_graph_pane(knox_app_t *app, knox_pane_t *p,
     } else {
         snprintf(col_hdr, sizeof(col_hdr), " Graph & Description");
     }
-    frame_move_write(frame, p->y + 1, p->x, col_hdr, p->w,
-                     app->opts.color ? "\033[4;37;48;5;235m" : "", true);
+    const char *col_hdr_sgr = app->opts.color
+                              ? (app->opts.linux_vt ? "\033[1;4m" : "\033[1;38;5;253;48;5;235m")
+                              : "";
+    frame_move_write(frame, p->y + 1, p->x, col_hdr, p->w, col_hdr_sgr, true);
 
     /* 3. Commit rows */
     int list_h = p->h - 2;
@@ -944,12 +993,7 @@ static void render_graph_pane(knox_app_t *app, knox_pane_t *p,
         }
         tam_str_free(refs);
 
-        const char *row_bg = "";
-        if (sel) {
-            row_bg = app->opts.color
-                     ? (is_focused ? "\033[1;37;44m" : "\033[48;5;238m")
-                     : "\033[7m";
-        }
+        const char *row_bg = sel ? sgr_row_selected(app, is_focused) : "";
 
         if (p->w >= 72) {
             char clipped_left[2048];
@@ -960,8 +1004,8 @@ static void render_graph_pane(knox_app_t *app, knox_pane_t *p,
             char right_meta[256];
             if (app->opts.color && !sel) {
                 snprintf(right_meta, sizeof(right_meta),
-                         " \033[90m%-*.*s\033[0m \033[32m%-*.*s\033[0m \033[33m%-8.8s\033[0m",
-                         date_w, date_w, date_str,
+                         " %s%-*.*s\033[0m \033[32m%-*.*s\033[0m \033[1;33m%-8.8s\033[0m",
+                         sgr_muted(app), date_w, date_w, date_str,
                          author_w, author_w, c->author ? c->author : "",
                          c->hash);
             } else {
@@ -996,9 +1040,9 @@ static void render_commit_detail_pane(knox_app_t *app, knox_pane_t *p,
     snprintf(hdr, sizeof(hdr),
              " Commit Details: %.8s (%s) | %zu file(s) changed [Enter: View Diff, v: View File, Ctrl+D: Close]",
              d->hash, repo->name, d->file_count);
-    const char *hdr_sgr = app->opts.color
-                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                          : (is_focused ? "\033[7m" : "");
+    const char *hdr_sgr = is_focused
+                          ? sgr_header_focused(app)
+                          : sgr_header_unfocused(app);
     frame_move_write(frame, p->y, p->x, hdr, p->w, hdr_sgr, true);
     if (p->h < 2)
         return;
@@ -1080,12 +1124,7 @@ static void render_commit_detail_pane(knox_app_t *app, knox_pane_t *p,
                      st_let, fc->path, stats);
         }
 
-        const char *row_bg = "";
-        if (sel) {
-            row_bg = app->opts.color
-                     ? (is_focused ? "\033[1;37;44m" : "\033[48;5;238m")
-                     : "\033[7m";
-        }
+        const char *row_bg = sel ? sgr_row_selected(app, is_focused) : "";
         frame_move_write(frame, row_y, p->x, line, p->w, row_bg, true);
     }
 }
@@ -1145,9 +1184,9 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
              knox_syntax_lang_name(doc->lang),
              total_lines ? doc->cursor_line + 1 : 0,
              total_lines);
-    const char *hdr_sgr = app->opts.color
-                          ? (is_focused ? "\033[1;30;46m" : "\033[1;37;48;5;238m")
-                          : (is_focused ? "\033[7m" : "");
+    const char *hdr_sgr = is_focused
+                          ? sgr_header_focused(app)
+                          : sgr_header_unfocused(app);
     frame_move_write(frame, p->y, p->x, hdr, p->w, hdr_sgr, true);
 
     int body_h = p->h - 1;
@@ -1203,7 +1242,7 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
             /* Raw syntax-highlighted row with line numbers */
             if (doc->kind == KNOX_DOC_FILE) {
                 if (app->opts.color && !is_cursor)
-                    row_str = tam_str_cat_printf(row_str, "\033[90m%4zu \033[0m", idx + 1);
+                    row_str = tam_str_cat_printf(row_str, "%s%4zu \033[0m", sgr_muted(app), idx + 1);
                 else
                     row_str = tam_str_cat_printf(row_str, "%4zu ", idx + 1);
             } else {
@@ -1254,13 +1293,7 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
             }
         }
 
-        const char *row_bg = "";
-        if (is_cursor) {
-            row_bg = app->opts.color
-                     ? (is_focused ? tam_pager_attention_sgr(app->opts.linux_vt)
-                                   : "\033[48;5;236m")
-                     : "\033[7m";
-        }
+        const char *row_bg = is_cursor ? sgr_row_selected(app, is_focused) : "";
         frame_move_write(frame, row_y, p->x, row_str, p->w, row_bg, true);
         tam_str_free(row_str);
     }
@@ -1342,8 +1375,10 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
     int x0 = (cols - box_w) / 2 + 1;
     int y0 = (rows - box_h) / 2 + 1;
-    const char *bg = app->opts.color ? "\033[37;48;5;235m" : "\033[7m";
-    const char *hdr_bg = app->opts.color ? "\033[1;30;46m" : "\033[7m";
+    const char *bg = app->opts.color
+                     ? (app->opts.linux_vt ? "\033[37;40m" : "\033[38;5;254;48;5;235m")
+                     : "\033[7m";
+    const char *hdr_bg = sgr_header_focused(app);
 
     if (app->modal == MODAL_GUIDANCE) {
         frame_move_write(frame, y0, x0,
@@ -1396,7 +1431,7 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
                          WIDGET_TABLE[wi].keys,
                          WIDGET_TABLE[wi].desc);
                 if (m == app->palette_cursor)
-                    row_sgr = app->opts.color ? "\033[1;37;44m" : "\033[7m";
+                    row_sgr = sgr_row_selected(app, true);
             }
             frame_move_write(frame, y0 + r, x0, line, box_w, row_sgr, true);
         }
@@ -1461,7 +1496,7 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
     tam_pager_format_footer(footer_buf, sizeof(footer_buf), cols, &pf);
 
     const char *bg = (app->opts.color && !app->opts.linux_vt)
-                     ? "\033[37;48;5;236m" : "\033[7m";
+                     ? "\033[38;5;254;48;5;236m" : "\033[7m";
     frame_move_write(frame, rows, 1, footer_buf, cols,
                      app->opts.color ? bg : "", true);
 }
@@ -1474,11 +1509,11 @@ static void app_draw(knox_app_t *app)
     if (cols < 40) cols = 80;
 
     app->sidebar_width = cols / 3;
-    if (app->sidebar_width < 28)
-        app->sidebar_width = 28;
-    if (app->sidebar_width > 44)
-        app->sidebar_width = 44;
-    if (cols < 65)
+    if (app->sidebar_width < 32)
+        app->sidebar_width = 32;
+    if (app->sidebar_width > 48)
+        app->sidebar_width = 48;
+    if (cols < 68)
         app->sidebar_width = cols / 2;
 
     int body_y = 2;

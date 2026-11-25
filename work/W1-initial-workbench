@@ -3,7 +3,7 @@ W1 INITIAL MULTI-REPOSITORY GIT WORKBENCH AND FILE VIEWER
 Date: 2026-11-25
 AI harness: agy 1.5.17
 AI model: gemini-4-argon-medium
-Commits: initial
+Commits: 8f7fafe
 
 GUIDANCE
 
@@ -30,6 +30,12 @@ GUIDANCE
   Implement tam-knox in C11 with zero dependencies other than the system
   C libraries and libtam."
 
+  Fred: "Create a public repo on GitHub for tam-knox, then push."
+
+  Fred: "Improve the color contrast. I can't read the highlighted repo
+  name; the foreground font color and background highlight color are too
+  close (not enough contrast)."
+
 DONE
 
   - Initialized tam-knox following the tam-idol 1.1.0 standard and wrote
@@ -51,6 +57,11 @@ DONE
   - Implemented the VS Code-style workbench TUI with toggleable sidebar,
     tabs, recursive horizontal/vertical split panes, command palette,
     and guidance overlay in src/pane.c and src/workbench.c.
+  - Improved 256-color contrast in 0.1.1 for tam-last (pure white 231 on
+    deep navy 24 for focused selection, pure white 231 on charcoal 237/
+    238 for unfocused headers and selections, pure black 16 on cyan 46
+    for focused headers, bright silver 247-254 for top bar and secondary
+    metadata) and added dynamic repo-name column sizing in the sidebar.
   - Verified with unit tests, interactive PTY tests, AddressSanitizer +
     UndefinedBehaviorSanitizer (make sanitize), and idol-check.
 

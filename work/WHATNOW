@@ -7,9 +7,10 @@ Updated: 2026-11-25, with W1
 
 STATE
 
-  Version 0.1.0 on branch dev. Initial multi-repository Git workbench
-  and file viewer is complete and passes make test, make sanitize, and
-  idol-check (W1).
+  Version 0.1.1 on branch dev. Initial multi-repository Git workbench
+  and file viewer is complete, with high-contrast 256-color selection
+  and header styling for tam-last and dynamic repo-name column sizing,
+  and passes make test, make sanitize, and idol-check (W1).
 
   Features working in 0.1.0:
   - Multi-repository Source Control sidebar (repository discovery,

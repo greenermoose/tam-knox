@@ -89,19 +89,18 @@ const char *knox_syntax_lang_name(knox_lang_t lang)
 
 const char *knox_syntax_token_sgr(knox_token_kind_t kind, bool linux_vt)
 {
-    (void)linux_vt;
     switch (kind) {
     case KNOX_TOK_KEYWORD:   return "\033[1;35m"; /* Bold Magenta */
-    case KNOX_TOK_TYPE:      return "\033[36m";   /* Cyan */
+    case KNOX_TOK_TYPE:      return "\033[1;36m"; /* Bold Cyan */
     case KNOX_TOK_STRING:    return "\033[32m";   /* Green */
-    case KNOX_TOK_NUMBER:    return "\033[33m";   /* Yellow */
-    case KNOX_TOK_COMMENT:   return "\033[90m";   /* Dim Gray */
-    case KNOX_TOK_PREPROC:   return "\033[34m";   /* Blue */
+    case KNOX_TOK_NUMBER:    return "\033[1;33m"; /* Bold Yellow */
+    case KNOX_TOK_COMMENT:   return linux_vt ? "\033[36m" : "\033[38;5;247m"; /* High-contrast muted gray */
+    case KNOX_TOK_PREPROC:   return "\033[1;34m"; /* Bold Blue */
     case KNOX_TOK_HEADING:   return "\033[1;36m"; /* Bold Cyan */
-    case KNOX_TOK_KEY:       return "\033[36m";   /* Cyan */
-    case KNOX_TOK_DIFF_ADD:  return "\033[32m";   /* Green */
-    case KNOX_TOK_DIFF_DEL:  return "\033[31m";   /* Red */
-    case KNOX_TOK_DIFF_HUNK: return "\033[36m";   /* Cyan */
+    case KNOX_TOK_KEY:       return "\033[1;36m"; /* Bold Cyan */
+    case KNOX_TOK_DIFF_ADD:  return "\033[1;32m"; /* Bold Green */
+    case KNOX_TOK_DIFF_DEL:  return "\033[1;31m"; /* Bold Red */
+    case KNOX_TOK_DIFF_HUNK: return "\033[1;36m"; /* Bold Cyan */
     case KNOX_TOK_DIFF_HDR:  return "\033[1;33m"; /* Bold Yellow */
     default:                 return "";
     }

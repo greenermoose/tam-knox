@@ -539,14 +539,14 @@ int knox_graph_rasterize(knox_graph_t *g, bool ascii)
 static const char *graph_colour_sgr(uint8_t colour, bool is_uncommitted)
 {
     if (is_uncommitted)
-        return "\033[90m";
+        return "\033[38;5;248m";
     static const char *const PALETTE[6] = {
-        "\033[36m", /* Cyan */
-        "\033[35m", /* Magenta */
-        "\033[32m", /* Green */
-        "\033[33m", /* Yellow */
-        "\033[34m", /* Blue */
-        "\033[31m"  /* Red */
+        "\033[1;36m", /* Cyan */
+        "\033[1;35m", /* Magenta */
+        "\033[1;32m", /* Green */
+        "\033[1;33m", /* Yellow */
+        "\033[1;34m", /* Blue */
+        "\033[1;31m"  /* Red */
     };
     return PALETTE[colour % 6];
 }
