@@ -123,11 +123,11 @@ int main(int argc, char **argv)
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Split pane vertically") != NULL);
 
-    assert(write(mfd, "\x07", 1) == 1); /* Ctrl+G */
+    assert(write(mfd, "g", 1) == 1); /* g toggles keybinding guidance */
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Keybinding Guidance") != NULL);
 
-    assert(write(mfd, "\x07\x11", 2) == 2); /* Ctrl+G then Ctrl+Q */
+    assert(write(mfd, "g\x11", 2) == 2); /* g closes guidance, then Ctrl+Q quits */
     drain_pty(mfd, out, sizeof(out), 200);
 
     int status = 0;

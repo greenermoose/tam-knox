@@ -59,7 +59,7 @@ KEYS
   Ctrl+D               Close active split pane or tab
   Ctrl+C               Copy selection, commit hash, or path (OSC 52)
   Ctrl+E               Open command palette and one-handed chord composer
-  Ctrl+G               Toggle keybinding guidance overlay
+  g, Ctrl+G            Toggle keybinding guidance overlay
   Ctrl+Q, q            Quit tam-knox
 
 

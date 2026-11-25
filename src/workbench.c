@@ -70,7 +70,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "update",              "Ctrl+U",        "Refresh repository statuses, commit graph, and explorer" },
     { "copy",                "Ctrl+C",        "Copy selection, commit hash, or file path (OSC 52)" },
     { "execute",             "Ctrl+E",        "Open Command Palette & One-Handed Chord Composer" },
-    { "guidance",            "Ctrl+G",        "Show keybinding guidance overlay" },
+    { "guidance",            "g / Ctrl+G",    "Show keybinding guidance overlay" },
     { "clear-screen",        "Ctrl+L",        "Clear and redraw terminal screen" },
     { "quit",                "Ctrl+Q / q",    "Quit tam-knox" }
 };
@@ -1382,7 +1382,7 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
     if (app->modal == MODAL_GUIDANCE) {
         frame_move_write(frame, y0, x0,
-                         " tam-knox Keybinding Guidance (Press Esc or Ctrl+G to close)",
+                         " tam-knox Keybinding Guidance (Press g, Esc, or Ctrl+G to close)",
                          box_w, hdr_bg, true);
         for (int r = 1; r < box_h; r++) {
             size_t idx = (size_t)(r - 1);
@@ -1448,12 +1448,12 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
 
     const char *hints =
         (app->focus == FOCUS_SIDEBAR_REPOS)
-        ? "[Enter] Load Graph  [Alt+S] Sync  [Tab] Focus  [Alt+2] Explorer  [Ctrl+G] Keys"
+        ? "[Enter] Load Graph  [Alt+S] Sync  [Tab] Focus  [Alt+2] Explorer  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_CHANGES)
-        ? "[Space] Stage/Unstage  [Enter] Diff  [Alt+C] Commit  [Alt+E] Edit  [Ctrl+G] Keys"
+        ? "[Space] Stage/Unstage  [Enter] Diff  [Alt+C] Commit  [Alt+E] Edit  [g] Keys"
         : (app->focus == FOCUS_SIDEBAR_EXPLORER)
-        ? "[Enter] Open/Expand  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [Ctrl+G] Keys"
-        : "[Enter] Inspect  [R] Render/Raw  [Alt+V/H] Split  [Alt+,/.] Tab  [Ctrl+D] Close  [Ctrl+G] Keys";
+        ? "[Enter] Open/Expand  [Alt+E] Edit  [Alt+1] Source Control  [Tab] Focus  [g] Keys"
+        : "[Enter] Inspect  [R] Render/Raw  [Alt+V/H] Split  [Alt+,/.] Tab  [Ctrl+D] Close  [g] Keys";
 
     char left_label[512];
     if (app->status_msg[0]) {
@@ -1976,7 +1976,8 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
 
     if (app->modal == MODAL_GUIDANCE) {
         if (ev->type == TAM_KEY_CHAR &&
-            (ev->codepoint == 'q' || ev->codepoint == 'Q'))
+            (ev->codepoint == 'q' || ev->codepoint == 'Q' ||
+             ev->codepoint == 'g' || ev->codepoint == 'G'))
             app->modal = MODAL_NONE;
         return;
     }
@@ -2198,6 +2199,10 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'q':
         case 'Q':
             app_execute_widget(app, "quit");
+            return;
+        case 'g':
+        case 'G':
+            app_execute_widget(app, "guidance");
             return;
         case 'j':
             app_move_selection(app, 1);

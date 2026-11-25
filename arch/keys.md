@@ -58,4 +58,5 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `]`, `[` | `]`, `[` | `link-next` / `link-prev` | Jump to next / previous hyperlink in rendered Markdown/HTML view |
 | `b`, `PageUp` | `b`, `PageUp` | `page-up` | Scroll page up |
 | `/`, `n`, `N` | `/`, `n`, `N` | `find`, `find-next`, `find-prev` | Search and step through matches |
+| `g` | `g` | `guidance` | Toggle keybinding guidance overlay (alias for `Ctrl+G`) |
 | `q` | `q` | `quit` | Quit `tam-knox` (when not typing in a prompt) |
