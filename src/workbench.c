@@ -72,7 +72,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "split-horizontal",    "Alt+H",         "Split active main pane stacked (top / bottom)" },
     { "focus-other-pane",    "Alt+W",         "Cycle focus among split panes in the active tab" },
     { "tab-prev",            "Alt+,",         "Switch to previous workbench tab" },
-    { "tab-next",            "Alt+.",         "Switch to next workbench tab" },
+    { "tab-next",            "Alt+.",         "Switch to next workbench tab (1-0 selects)" },
     { "new",                 "Ctrl+N",        "Open a new workbench tab" },
     { "close",               "Ctrl+D",        "Close active split pane or workbench tab" },
     { "find",                "Ctrl+F / /",    "Find in repo list, Explorer tree, commit graph, or file" },
@@ -615,6 +615,73 @@ static const char *sgr_muted(const knox_app_t *app)
     return app->opts.linux_vt ? "\033[37m" : "\033[38;5;248m";
 }
 
+static int visible_text_cols(const char *s)
+{
+    if (!s)
+        return 0;
+    int vis = 0;
+    const char *p = s;
+    while (*p) {
+        uint32_t cp = 0;
+        size_t clen = tam_utf8_decode(p, strlen(p), &cp);
+        if (clen == 0)
+            break;
+        if (cp >= 0x20) {
+            int cw = tam_uni_width(cp);
+            vis += (cw < 0) ? 1 : cw;
+        }
+        p += clen;
+    }
+    return vis;
+}
+
+static void truncate_text_cols(const char *src, int max_cols, bool ascii,
+                               char *out, size_t cap)
+{
+    if (!out || cap == 0)
+        return;
+    if (!src || max_cols <= 0) {
+        out[0] = '\0';
+        return;
+    }
+    if (visible_text_cols(src) <= max_cols) {
+        snprintf(out, cap, "%s", src);
+        return;
+    }
+    const char *ell = ascii ? "~" : "\xe2\x80\xa6";
+    size_t ell_len = strlen(ell);
+    int limit = (max_cols >= 2) ? max_cols - 1 : max_cols;
+    size_t pos = 0;
+    int vis = 0;
+    const char *p = src;
+    while (*p && vis < limit) {
+        uint32_t cp = 0;
+        size_t clen = tam_utf8_decode(p, strlen(p), &cp);
+        if (clen == 0)
+            break;
+        if (cp < 0x20) {
+            p += clen;
+            continue;
+        }
+        int cw = tam_uni_width(cp);
+        if (cw < 0)
+            cw = 1;
+        if (vis + cw > limit)
+            break;
+        if (pos + clen + ell_len + 1 >= cap)
+            break;
+        memcpy(out + pos, p, clen);
+        pos += clen;
+        vis += cw;
+        p += clen;
+    }
+    if (max_cols >= 2 && pos + ell_len < cap) {
+        memcpy(out + pos, ell, ell_len);
+        pos += ell_len;
+    }
+    out[pos] = '\0';
+}
+
 static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 {
     const char *ws_base = strrchr(app->ws.root_path, '/');
@@ -622,39 +689,81 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 
     const char *bar_bg = (app->opts.color && !app->opts.linux_vt)
                          ? "\033[38;5;254;48;5;236m" : "\033[7m";
-    const char *act_mode_sgr = app->opts.linux_vt
-                               ? "\033[1;33m" : "\033[1;38;5;228;48;5;236m";
-    const char *inact_mode_sgr = app->opts.linux_vt
-                                 ? "\033[37m" : "\033[38;5;250;48;5;236m";
+
+    char prefix_plain[256];
+    snprintf(prefix_plain, sizeof(prefix_plain),
+             " tam-knox %s (%zu repos) ", ws_base, app->ws.count);
+    int prefix_w = visible_text_cols(prefix_plain);
+    int avail = cols - prefix_w;
+    if (avail < 0)
+        avail = 0;
 
     tam_str_t bar = tam_str_new("");
     if (app->opts.color) {
         bar = tam_str_cat_printf(bar,
             " \033[1;36;48;5;236mtam-knox\033[0m%s \033[1;38;5;231;48;5;236m%s\033[0m%s (%zu repos) ",
             bar_bg, ws_base, bar_bg, app->ws.count);
-        bar = tam_str_cat_printf(bar,
-            "%s[Alt+1 Source Control]\033[0m%s %s[Alt+2 Explorer]\033[0m%s | ",
-            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_SOURCE_CONTROL)
-                ? act_mode_sgr : inact_mode_sgr,
-            bar_bg,
-            (app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER)
-                ? act_mode_sgr : inact_mode_sgr,
-            bar_bg);
     } else {
-        bar = tam_str_cat_printf(bar, " tam-knox %s (%zu repos) [%s] | ",
-            ws_base, app->ws.count,
-            app->sidebar_mode == SIDEBAR_SOURCE_CONTROL ? "1:Source Control" : "2:Explorer");
+        bar = tam_str_cat(bar, prefix_plain);
     }
 
-    for (size_t i = 0; i < app->tab_count; i++) {
+    size_t ntabs = app->tab_count;
+    if (ntabs > MAX_TABS)
+        ntabs = MAX_TABS;
+
+    int full_w[MAX_TABS];
+    int alloc_w[MAX_TABS];
+    int fixed_sum = 0;
+    int full_sum = 0;
+    for (size_t i = 0; i < ntabs; i++) {
+        int num_len = (i <= 9) ? 1 : 2;
+        fixed_sum += 4 + num_len;
+        full_w[i] = visible_text_cols(app->tabs[i].title);
+        alloc_w[i] = full_w[i];
+        full_sum += full_w[i];
+    }
+
+    if (ntabs > 0 && fixed_sum + full_sum > avail) {
+        int title_budget = avail - fixed_sum;
+        if (title_budget < 0)
+            title_budget = 0;
+        int cur_sum = full_sum;
+        while (cur_sum > title_budget) {
+            int max_w = 0;
+            for (size_t i = 0; i < ntabs; i++) {
+                if (alloc_w[i] > max_w)
+                    max_w = alloc_w[i];
+            }
+            if (max_w <= 0)
+                break;
+            for (size_t i = 0; i < ntabs && cur_sum > title_budget; i++) {
+                if (alloc_w[i] == max_w) {
+                    alloc_w[i]--;
+                    cur_sum--;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < ntabs; i++) {
         bool act = (i == app->active_tab);
+        char num_label[16];
+        if (i == 9)
+            snprintf(num_label, sizeof(num_label), "0");
+        else
+            snprintf(num_label, sizeof(num_label), "%zu", i + 1);
+
+        char disp_title[128];
+        truncate_text_cols(app->tabs[i].title, alloc_w[i],
+                           app->opts.ascii, disp_title, sizeof(disp_title));
+
         if (app->opts.color) {
-            bar = tam_str_cat_printf(bar, "%s %zu:%s \033[0m%s ",
+            bar = tam_str_cat_printf(bar, "|%s %s:%s \033[0m%s",
                 act ? sgr_header_focused(app) : "\033[1;38;5;252;48;5;238m",
-                i + 1, app->tabs[i].title, bar_bg);
+                num_label, disp_title, bar_bg);
         } else {
-            bar = tam_str_cat_printf(bar, "%s%zu:%s%s ",
-                act ? "[" : " ", i + 1, app->tabs[i].title, act ? "]" : " ");
+            bar = tam_str_cat_printf(bar, "|%s%s:%s%s",
+                act ? "[" : " ", num_label, disp_title, act ? "]" : " ");
         }
     }
 
@@ -2154,6 +2263,13 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
             app->active_tab = (app->active_tab + 1) % app->tab_count;
             app->focus = FOCUS_MAIN_PANE;
         }
+    } else if (strncmp(widget, "tab-", 4) == 0 &&
+               widget[4] >= '0' && widget[4] <= '9' && widget[5] == '\0') {
+        size_t idx = (widget[4] == '0') ? 9 : (size_t)(widget[4] - '1');
+        if (idx < app->tab_count) {
+            app->active_tab = idx;
+            app->focus = FOCUS_MAIN_PANE;
+        }
     } else if (strcmp(widget, "new") == 0) {
         knox_pane_t *gp = knox_pane_new(KNOX_PANE_GRAPH, app->active_repo_idx);
         if (gp) {
@@ -2987,6 +3103,21 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'N':
             app_execute_widget(app, "find-prev");
             return;
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+        case '0': {
+            char wname[8];
+            snprintf(wname, sizeof(wname), "tab-%c", (char)ev->codepoint);
+            app_execute_widget(app, wname);
+            return;
+        }
         case 'v':
             /* In commit detail inspector, 'v' views the full file snapshot at that commit */
             if (app->focus == FOCUS_MAIN_PANE) {

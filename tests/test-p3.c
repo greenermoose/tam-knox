@@ -283,6 +283,11 @@ static void test_keymap_ini(void)
     assert(w != NULL && strcmp(w, "update") == 0);
     assert(knox_keymap_is_valid_widget("repo-fetch"));
     assert(knox_keymap_is_valid_widget("explore-repo"));
+    assert(knox_keymap_is_valid_widget("tab-1"));
+    assert(knox_keymap_is_valid_widget("tab-5"));
+    assert(knox_keymap_is_valid_widget("tab-9"));
+    assert(knox_keymap_is_valid_widget("tab-0"));
+    assert(!knox_keymap_is_valid_widget("tab-10"));
 
     tam_key_event_t ev_ax = { .type = TAM_KEY_CHAR, .codepoint = 'x', .mods = TAM_MOD_ALT };
     w = knox_keymap_lookup(&km, &ev_ax);

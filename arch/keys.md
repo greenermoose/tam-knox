@@ -50,6 +50,7 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `Alt+H` | `Alt+H` | `split-horizontal` | Split active main pane stacked (top / bottom) |
 | `Alt+W` | `Alt+W` | `focus-other-pane` | Cycle focus among split panes inside the active tab |
 | `Alt+,` / `Alt+.` | `Alt+,` / `Alt+.` | `tab-prev` / `tab-next` | Switch to previous / next tab in the main workbench |
+| `1`–`9`, `0` | `1`–`9`, `0` | `tab-1`..`tab-9`, `tab-0` | Focus and select workbench tab 1–10 in keyboard row order (`0` selects the 10th tab) |
 | `f` | `f` | `repo-fetch` | Non-destructive `git fetch --prune` for the focused repository |
 | `s`, `Alt+S` | `s`, `Alt+S` | `repo-sync` | Sync focused repository with remote (`fetch`, `pull --ff-only`, `push`; confirms on `main`/`test`) |
 | `Alt+A`, `F` | `Alt+A`, `F` | `fetch-all` | Non-destructive batch `git fetch --prune` across all repositories with remotes |

@@ -62,6 +62,7 @@ KEYS
   Alt+V, Alt+H         Split active main pane vertically or horizontally
   Alt+W                Cycle focus among split panes in active tab
   Alt+, / Alt+.        Switch to previous or next workbench tab
+  1-9, 0               Focus and select workbench tabs 1-10 in keyboard order
   R, Alt+R             Toggle Rendered vs. Raw syntax-colored file view
   B, Alt+F             Cycle branch filter in Git Graph (All / HEAD)
   Ctrl+F, /            Find in repo list, filter Explorer tree (live; Esc

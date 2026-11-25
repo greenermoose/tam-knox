@@ -351,6 +351,128 @@ static void test_pty_explore_repo(const char *bin)
     tam_fs_remove_tree(-100, ws_dir);
 }
 
+static void test_pty_tab_number_select(const char *bin)
+{
+    char tmp_tpl[] = "/tmp/knox-pty-tab-XXXXXX";
+    char *ws_dir = mkdtemp(tmp_tpl);
+    assert(ws_dir != NULL);
+
+    char *repo = tam_path_join(ws_dir, "demo-repo");
+    assert(tam_fs_mkdir_p(repo, 0755));
+    run_git((const char *[]){"git", "-C", repo, "init", "-b", "dev", NULL});
+    run_git((const char *[]){"git", "-C", repo, "config", "user.name", "Fred", NULL});
+    run_git((const char *[]){"git", "-C", repo, "config", "user.email", "fred@example.com", NULL});
+
+    char *f = tam_path_join(repo, "notes.txt");
+    assert(tam_fs_write_atomic(f, "line1\n", 6, 0644));
+    run_git((const char *[]){"git", "-C", repo, "add", "--", "notes.txt", NULL});
+    run_git((const char *[]){"git", "-C", repo, "commit", "-m", "init notes", NULL});
+    assert(tam_fs_write_atomic(f, "line1\nline2\n", 12, 0644));
+
+    int mfd = posix_openpt(O_RDWR | O_NOCTTY);
+    assert(mfd >= 0);
+    assert(grantpt(mfd) == 0);
+    assert(unlockpt(mfd) == 0);
+    char *sname = ptsname(mfd);
+    assert(sname != NULL);
+
+    struct winsize wsz = { .ws_row = 30, .ws_col = 110 };
+    pid_t pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        close(mfd);
+        setsid();
+        int sfd = open(sname, O_RDWR);
+        if (sfd < 0)
+            _exit(127);
+        ioctl(sfd, TIOCSCTTY, 0);
+        ioctl(sfd, TIOCSWINSZ, &wsz);
+        dup2(sfd, STDIN_FILENO);
+        dup2(sfd, STDOUT_FILENO);
+        dup2(sfd, STDERR_FILENO);
+        if (sfd > 2)
+            close(sfd);
+        setenv("TERM", "xterm-256color", 1);
+        unsetenv("TAM_KNOX_KEYMAP");
+        execl(bin, bin, ws_dir, (char *)NULL);
+        _exit(127);
+    }
+
+    char out[65536];
+    size_t n = drain_pty(mfd, out, sizeof(out), 800);
+    assert(n > 0);
+    /* Top bar omits Alt+1/Alt+2 hints and shows full 1:Git Graph title */
+    assert(strstr(out, "[Alt+1 Source Control]") == NULL);
+    assert(strstr(out, "[Alt+2 Explorer]") == NULL);
+    assert(strstr(out, "1:Git Graph") != NULL);
+
+    /* Open tab 2 (Diff notes.txt) from Changes */
+    assert(write(mfd, "\t\r", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "2:Diff notes.txt", 3000));
+    assert(strstr(out, "Unified Diff") != NULL);
+
+    /* Focus sidebar (Alt+1 -> [Repos]), then press '1' -> selects & focuses Git Graph */
+    assert(write(mfd, "\0331", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Repos]", 3000));
+    assert(write(mfd, "1", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Workbench]", 3000));
+    assert(strstr(out, "Git Graph | Repo: demo-repo") != NULL);
+
+    /* Focus sidebar (Alt+1 -> [Repos]), then press '2' -> selects & focuses Diff tab */
+    assert(write(mfd, "\0331", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Repos]", 3000));
+    assert(write(mfd, "2", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Workbench]", 3000));
+    assert(strstr(out, "Unified Diff") != NULL);
+
+    /* Focus sidebar, press '0' when only 2 tabs exist -> safe no-op, stays in [Repos] */
+    assert(write(mfd, "\0331", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Repos]", 3000));
+    assert(write(mfd, "0", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(write(mfd, "\x0c", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(strstr(out, "[Repos]") != NULL);
+
+    /* Open 8 more tabs (Ctrl+N x 8) to reach 10 tabs; all 10 (1..9, 0) must appear */
+    for (int k = 0; k < 8; k++) {
+        assert(write(mfd, "\x0e", 1) == 1);
+        drain_pty(mfd, out, sizeof(out), 80);
+    }
+    assert(write(mfd, "\x0c", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 250);
+    assert(strstr(out, "1:") != NULL);
+    assert(strstr(out, "2:") != NULL);
+    assert(strstr(out, "9:") != NULL);
+    assert(strstr(out, "0:") != NULL);
+
+    /* Focus sidebar, press '0' -> selects & focuses 10th tab ([Workbench]) */
+    assert(write(mfd, "\0331", 2) == 2);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Repos]", 3000));
+    assert(write(mfd, "0", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Workbench]", 3000));
+    assert(strstr(out, "Git Graph | Repo: demo-repo") != NULL);
+
+    /* Digits typed in search modal ('/1230') stay in prompt and don't switch tabs */
+    assert(write(mfd, "/1230", 5) == 5);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Find: 1230", 3000));
+    assert(write(mfd, "\033", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 150);
+
+    /* Quit cleanly */
+    assert(write(mfd, "\x11", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 200);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    close(mfd);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+    free(f);
+    free(repo);
+    tam_fs_remove_tree(-100, ws_dir);
+}
+
 int main(int argc, char **argv)
 {
     const char *bin = (argc > 1) ? argv[1] : "build/tam-knox";
@@ -498,6 +620,7 @@ int main(int argc, char **argv)
 
     test_pty_repo_sync(bin);
     test_pty_explore_repo(bin);
+    test_pty_tab_number_select(bin);
 
     printf("test-pty: all interactive TUI checks passed\n");
     return 0;

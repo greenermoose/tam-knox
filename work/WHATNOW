@@ -7,11 +7,11 @@ Updated: 2026-11-25, with W4
 
 STATE
 
-  Version 1.0.2 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
-  P3 (0.3.0-1.0.2) are complete and pass make test, make sanitize, and
+  Version 1.0.3 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
+  P3 (0.3.0-1.0.3) are complete and pass make test, make sanitize, and
   idol-check (W1, W2, W3, W4).
 
-  Features working in 1.0.2:
+  Features working in 1.0.3:
   - Multi-repository Source Control sidebar (repository discovery,
     branch name, dirty/clean state, changed files list, ahead/behind
     count, path-scoped staging and committing, single-repo remote fetch
@@ -32,8 +32,9 @@ STATE
   - Optional user keymap.ini configuration via libtam tam_ini
     (~/.config/tamlinux/tam-knox/keymap.ini or TAM_KNOX_KEYMAP).
   - File and Diff Viewer with C11 syntax coloring and tam-view Markdown,
-    HTML, and Mermaid rendering, tabs, split panes, command palette, and
-    keybinding guidance (g / Ctrl+G).
+    HTML, and Mermaid rendering, tabs (direct 1-9 and 0 focus/selection
+    with on-demand top-bar title shrinking), split panes, command
+    palette, and keybinding guidance (g / Ctrl+G).
 
 NEXT
 
