@@ -1642,6 +1642,43 @@ static void render_split_tree(knox_app_t *app, knox_split_node_t *node,
     render_split_tree(app, node->child2, frame);
 }
 
+static void render_modal_border(const knox_app_t *app, tam_str_t *frame,
+                                int rows, int cols,
+                                int x0, int y0, int box_w, int box_h)
+{
+    if (rows < 1 || cols < 1 || box_w < 1 || box_h < 1)
+        return;
+
+    const char *border_bg = app->opts.color
+                            ? (app->opts.linux_vt ? "\033[40m" : "\033[48;5;16m")
+                            : "";
+    const int pad_x = 2;
+    int left_w = (x0 > 1) ? ((x0 - 1 < pad_x) ? (x0 - 1) : pad_x) : 0;
+    int right_avail = cols - (x0 + box_w - 1);
+    int right_w = (right_avail > 0)
+                  ? ((right_avail < pad_x) ? right_avail : pad_x) : 0;
+    int outer_x = x0 - left_w;
+    int outer_w = left_w + box_w + right_w;
+
+    if (outer_w > 0) {
+        if (y0 > 1)
+            frame_move_write(frame, y0 - 1, outer_x, "", outer_w, border_bg, true);
+        if (y0 + box_h <= rows)
+            frame_move_write(frame, y0 + box_h, outer_x, "", outer_w, border_bg, true);
+    }
+    if (left_w > 0 || right_w > 0) {
+        for (int r = 0; r < box_h; r++) {
+            int y = y0 + r;
+            if (y < 1 || y > rows)
+                continue;
+            if (left_w > 0)
+                frame_move_write(frame, y, outer_x, "", left_w, border_bg, true);
+            if (right_w > 0)
+                frame_move_write(frame, y, x0 + box_w, "", right_w, border_bg, true);
+        }
+    }
+}
+
 static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
                                  int rows, int cols)
 {
@@ -1689,6 +1726,8 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
                      ? (app->opts.linux_vt ? "\033[37;40m" : "\033[38;5;254;48;5;235m")
                      : "\033[7m";
     const char *hdr_bg = sgr_header_focused(app);
+
+    render_modal_border(app, frame, rows, cols, x0, y0, box_w, box_h);
 
     if (app->modal == MODAL_GUIDANCE) {
         frame_move_write(frame, y0, x0,
