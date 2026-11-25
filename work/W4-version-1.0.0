@@ -1,9 +1,9 @@
-W4 BUMP TO VERSION 1.0.0
+W4 VERSION 1.0.0 AND 1.0.1 SINGLE-REPOSITORY FETCH KEYBINDING
 
 Date: 2026-11-25
 AI harness: agy 1.5.17
 AI model: gemini-4-argon-medium
-Commits: pending
+Commits: f55a7c6
 Continues: W3
 
 GUIDANCE
@@ -11,15 +11,31 @@ GUIDANCE
   Fred: "Consider tam-knox. Any further milestones to be achieved? If
   so, update ROADMAP.md. Otherwise, bump to version 1.0.0."
 
+  Fred: "/plan For tam-knox 1.0.1, assign f key to fetch in the
+  repository list. When a repository is selected, pressing f should
+  fetch from the remote."
+
+  Fred: "/plan show your plan to me in tam-view"
+
+  Fred: "Approved. Proceed."
+
 DONE
 
   - Reviewed tam-knox against all planned phases (P1, P2, P3), field
-    survey synthesis (ideas/synthesis.md), and architecture specs; all
-    planned core features and milestones are implemented and tested.
-  - Bumped VERSION and KNOX_VERSION in include/knox.h to 1.0.0.
-  - Updated ROADMAP.md, plans/README-plans, and work/WHATNOW for 1.0.0.
+    survey synthesis (ideas/synthesis.md), and architecture specs, and
+    bumped VERSION and KNOX_VERSION to 1.0.0.
+  - Added the repo-fetch widget bound to f in normal mode in
+    src/keymap.c and src/workbench.c so pressing f fetches the selected
+    repository from its remote (git fetch --prune), updates ahead/behind
+    status, refreshes the Git Graph and Explorer, and reports progress
+    and summary in the status bar.
+  - Updated VERSION, include/knox.h, ROADMAP.md, README, arch/keys.md,
+    plans/README-plans, and work/WHATNOW to version 1.0.1.
+  - Extended tests/test-p3.c and tests/test-pty.c to verify repo-fetch
+    widget validation and interactive f single-repository fetching in
+    the repository list.
   - Verified with make test, make sanitize (ASan + UBSan), and
-    idol-check, and installed tam-knox 1.0.0 to ~/.local/bin.
+    idol-check, and installed tam-knox 1.0.1 to ~/.local/bin.
 
 FAILED
 
@@ -27,4 +43,4 @@ FAILED
 
 HANDOFF
 
-  - tam-knox 1.0.0 is built, tested, and installed to ~/.local/bin.
+  - tam-knox 1.0.1 is built, tested, and installed to ~/.local/bin.

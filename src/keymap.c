@@ -16,6 +16,7 @@ static const char *const VALID_WIDGETS[] = {
     "focus-prev",
     "open-or-inspect",
     "stage-or-page-down",
+    "repo-fetch",
     "repo-sync",
     "fetch-all",
     "commit-prompt",

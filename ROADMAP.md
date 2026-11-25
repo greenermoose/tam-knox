@@ -14,3 +14,4 @@ viewer, written in C11 on top of `libtam`.
 | **0.3.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | File tree substring filtering, multi-repo batch fetch (`Alt+A` / `F`), and user `keymap.ini` customization via `libtam` `tam_ini` | Done (2026-11-25) |
 | **0.3.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `s` in normal mode to sync the selected repository with its remote | Done (2026-11-25) |
 | **1.0.0** | [P1](plans/P1-initial-workbench.md)–[P3](plans/P3-filter-batch-fetch-and-keymap.md) | Complete v1 multi-repository Git workbench, commit graph, explorer, and file/diff viewer | Done (2026-11-25) |
+| **1.0.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `f` in normal mode (`repo-fetch`) to fetch the selected repository from its remote (`git fetch --prune`) | Done (2026-11-25) |

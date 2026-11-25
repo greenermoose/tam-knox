@@ -225,6 +225,7 @@ static void test_keymap_ini(void)
     tam_key_event_t ev_f5 = { .type = TAM_KEY_F5, .codepoint = 0, .mods = 0 };
     const char *w = knox_keymap_lookup(&km, &ev_f5);
     assert(w != NULL && strcmp(w, "update") == 0);
+    assert(knox_keymap_is_valid_widget("repo-fetch"));
 
     tam_key_event_t ev_ax = { .type = TAM_KEY_CHAR, .codepoint = 'x', .mods = TAM_MOD_ALT };
     w = knox_keymap_lookup(&km, &ev_ax);

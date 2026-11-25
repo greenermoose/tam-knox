@@ -196,6 +196,29 @@ static void test_pty_repo_sync(const char *bin)
     assert(strstr(out, "\xe2\x86\x91" "0 " "\xe2\x86\x93" "1") == NULL);
     assert(strstr(out, "\xe2\x86\x91" "0 " "\xe2\x86\x93" "2") == NULL);
 
+    /* 6. Push v4 from repo-ahead directly to remote, then press 'f' on selected
+     *    repo-behind in tam-knox -> fetches without pulling and shows ↓1 badge */
+    assert(tam_fs_write_atomic(file_a, "v4\n", 3, 0644));
+    run_git((const char *[]){"git", "-C", repo_ahead, "add", "--", "file.txt", NULL});
+    run_git((const char *[]){"git", "-C", repo_ahead, "commit", "-m", "v4", NULL});
+    run_git((const char *[]){"git", "-C", repo_ahead, "push", NULL});
+
+    assert(write(mfd, "f", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "repo-behind (dev): fetched (+0/-1)", 5000));
+
+    char behind_head_after_fetch[64], behind_up_after_fetch[64], remote_v4[64];
+    get_git_rev(repo_behind, "HEAD", behind_head_after_fetch, sizeof(behind_head_after_fetch));
+    get_git_rev(repo_behind, "origin/dev", behind_up_after_fetch, sizeof(behind_up_after_fetch));
+    get_git_rev(remote_dir, "refs/heads/dev", remote_v4, sizeof(remote_v4));
+    /* Working tree HEAD must remain at v3 while origin/dev moved to v4 */
+    assert(strcmp(behind_head_after_fetch, behind_head) == 0);
+    assert(strcmp(behind_up_after_fetch, remote_v4) == 0);
+    assert(strcmp(behind_head_after_fetch, behind_up_after_fetch) != 0);
+
+    assert(write(mfd, "\x0c", 1) == 1);
+    drain_pty(mfd, out, sizeof(out), 250);
+    assert(strstr(out, "\xe2\x86\x91" "0 " "\xe2\x86\x93" "1") != NULL);
+
     /* Quit cleanly */
     assert(write(mfd, "\x11", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 200);
