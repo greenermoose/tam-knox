@@ -12,3 +12,5 @@ viewer, written in C11 on top of `libtam`.
 | **0.1.2** | [P1](plans/P1-initial-workbench.md) | Add `g` single-key shortcut to toggle the keybinding guidance overlay alongside `Ctrl+G` | Done (2026-11-25) |
 | **0.2.0** | [P2](plans/P2-branch-stash-and-split-diff.md) | Branch checkout / creation modal, stash management, and side-by-side diff split mode | Done (2026-11-25) |
 | **0.3.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | File tree substring filtering, multi-repo batch fetch (`Alt+A` / `F`), and user `keymap.ini` customization via `libtam` `tam_ini` | Done (2026-11-25) |
+| **0.3.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `s` in normal mode to sync the selected repository with its remote | Done (2026-11-25) |
+| **1.0.0** | [P1](plans/P1-initial-workbench.md)–[P3](plans/P3-filter-batch-fetch-and-keymap.md) | Complete v1 multi-repository Git workbench, commit graph, explorer, and file/diff viewer | Done (2026-11-25) |

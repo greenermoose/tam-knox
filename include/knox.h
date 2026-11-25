@@ -17,7 +17,7 @@
 #include <time.h>
 
 #ifndef KNOX_VERSION
-#define KNOX_VERSION "0.3.1"
+#define KNOX_VERSION "1.0.0"
 #endif
 
 /* ========================================================================= */

@@ -47,5 +47,6 @@ IN THIS REPOSITORY
                                    Tabs, and Splits
   P2-branch-stash-and-split-diff.md  0.2.0: interactive branch modal,
                                    stash management, and side-by-side diff
-  P3-filter-batch-fetch-and-keymap.md  0.3.0: Explorer substring filter,
-                                   multi-repo batch fetch, and user keymap.ini
+  P3-filter-batch-fetch-and-keymap.md  0.3.0-1.0.0: Explorer substring filter,
+                                   multi-repo batch fetch, user keymap.ini,
+                                   and 1.0.0 complete workbench

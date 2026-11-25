@@ -3,20 +3,20 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-25, with W3
+Updated: 2026-11-25, with W4
 
 STATE
 
-  Version 0.3.0 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
-  P3 (0.3.0) are complete and pass make test, make sanitize, and
-  idol-check (W1, W2, W3).
+  Version 1.0.0 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
+  P3 (0.3.0-0.3.1) are complete and pass make test, make sanitize, and
+  idol-check (W1, W2, W3, W4).
 
-  Features working in 0.3.0:
+  Features working in 1.0.0:
   - Multi-repository Source Control sidebar (repository discovery,
     branch name, dirty/clean state, changed files list, ahead/behind
     count, path-scoped staging and committing, single-repo remote sync
-    with protected-branch confirmation, and non-destructive multi-repo
-    batch fetch via Alt+A / F).
+    via s / Alt+S with protected-branch confirmation, and
+    non-destructive multi-repo batch fetch via Alt+A / F).
   - Interactive Branch Checkout and Creation modal (Alt+K or c) and
     Stash Management modal (Alt+Z or z).
   - Side-by-Side Split Diff mode (d, D, Alt+D, or R in Diff Viewer).
@@ -33,7 +33,7 @@ STATE
 
 NEXT
 
-  1. Await Fred's direction for Phase P4 (0.4.0) or candidate inclusion.
+  1. Await Fred's direction for candidate inclusion or post-1.0 enhancements.
 
 WAITING FOR FRED
 
