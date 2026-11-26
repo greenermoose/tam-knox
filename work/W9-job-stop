@@ -1,0 +1,23 @@
+W9 PAUSE THROUGH LIBTAM (TAM-KNOX 1.1.1)
+
+Date: 2026-11-26
+AI harness: Claude Code 2.1.332
+AI model: claude-opus-5-5
+Continues: W8
+
+
+GUIDANCE
+
+  Fred: "Fix the libtam bug."
+
+
+DONE
+
+  - Ctrl+P calls tam_tty_job_stop (libtam 0.14.1, which also pauses a
+    session leader) instead of raising SIGSTOP itself. The Makefile
+    requires libtam 0.14.1. make test passes.
+
+
+FAILED
+
+  - Nothing.

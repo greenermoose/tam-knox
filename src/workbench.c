@@ -3003,11 +3003,8 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'c': app_execute_widget(app, "copy"); return;
         case 's': app_execute_widget(app, "commit-prompt"); return;
         case 'l': return; /* Redraws at end of loop */
-        case 'p': /* Pause: stop until the shell continues us. SIGSTOP, as
-                   * SIGTSTP is discarded for a session leader. */
-            tam_tty_suspend(&app->tty);
-            (void)raise(SIGSTOP);
-            tam_tty_resume(&app->tty);
+        case 'p': /* Pause: stop until continued, then restore our modes. */
+            (void)tam_tty_job_stop(&app->tty);
             return;
         default:  return; /* No double-acting Ctrl codes */
         }
