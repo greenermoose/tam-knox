@@ -76,10 +76,10 @@ folder ([`vscode.md`](vscode.md), [`vscode-git-graph.md`](vscode-git-graph.md),
 ## 5. File & Diff Viewer (`tam-view` + Syntax Highlighting)
 
 - **`tam-view` Markdown, HTML, and Mermaid rendering (`UPSTREAM.md`).**
-  Reuses `tam-view`'s C11 rendering engine so `.md`, `.html`, and `.mmd`
+  Reuses `tam-view`'s C17 rendering engine so `.md`, `.html`, and `.mmd`
   files render formatted headings, tables, blockquotes, lists, hyperlinks,
   and Mermaid diagrams, toggled with `R` / `Alt+R`. P1 0.1.0.
-- **Built-in C11 table-driven syntax lexer (`src/syntax.c`).** Colors C/C++,
+- **Built-in C17 table-driven syntax lexer (`src/syntax.c`).** Colors C/C++,
   POSIX Shell, Python, JS/TS/QML, JSON/JSONC, YAML, TOML, INI, Makefile,
   Markdown, HTML, Rust, Go, and Unified Diffs with line numbers and a
   breadcrumb bar (`repo > file > heading`), plus `Alt+E` to jump into

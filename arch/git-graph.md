@@ -1,7 +1,7 @@
 # Git Graph Layout and Rasterization (`src/graph.c`)
 
 `tam-knox` ports the commit graph layout algorithm from the VS Code Git
-Graph extension (`mhutchie.git-graph` 1.30.0, `media/out.min.js`) to C11
+Graph extension (`mhutchie.git-graph` 1.30.0, `media/out.min.js`) to C17
 and rasterizes the resulting vector branch lines onto a terminal
 character cell grid.
 

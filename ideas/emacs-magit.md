@@ -44,7 +44,7 @@
   drawing to `git log --graph --color`, which produces wide, jagged ASCII
   slashes (`/`, `\`, `|`) that cannot coalesce merge lanes cleanly like
   VS Code Git Graph's `determinePath` router. `tam-knox` computes its
-  own graph layout in C11.
+  own graph layout in C17.
 
 ## Where to look
 

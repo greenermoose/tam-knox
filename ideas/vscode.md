@@ -58,7 +58,7 @@
 - **Electron / Chromium memory and CPU footprint.** Running a full
   browser engine to inspect 25 Git repositories and Markdown files uses
   hundreds of megabytes of RAM and background file-watcher daemons.
-  `tam-knox` runs in a few megabytes of C11 in `tam-last` or a Linux VT.
+  `tam-knox` runs in a few megabytes of C17 in `tam-last` or a Linux VT.
 - **Unscoped "Commit All" defaults.** When no files are staged, VS Code
   offers to stage and commit the entire working tree (`git commit -a`),
   which violates Tamlinux's multi-agent path-claim rules. `tam-knox`
