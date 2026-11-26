@@ -251,26 +251,10 @@ static void app_copy_to_clipboard(knox_app_t *app, const char *text)
     snprintf(app->clipboard, sizeof(app->clipboard), "%s", text);
 
     /* OSC 52 write when not on TERM=linux */
-    if (!app->opts.linux_vt && app->tty.interactive) {
-        static const char B64[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        size_t len = strlen(text);
-        tam_str_t osc = tam_str_new("\033]52;c;");
-        for (size_t i = 0; i < len; i += 3) {
-            uint32_t v = ((uint32_t)(unsigned char)text[i]) << 16;
-            if (i + 1 < len) v |= ((uint32_t)(unsigned char)text[i + 1]) << 8;
-            if (i + 2 < len) v |= ((uint32_t)(unsigned char)text[i + 2]);
-            char quad[5];
-            quad[0] = B64[(v >> 18) & 0x3F];
-            quad[1] = B64[(v >> 12) & 0x3F];
-            quad[2] = (i + 1 < len) ? B64[(v >> 6) & 0x3F] : '=';
-            quad[3] = (i + 2 < len) ? B64[v & 0x3F] : '=';
-            quad[4] = '\0';
-            osc = tam_str_cat(osc, quad);
-        }
-        osc = tam_str_cat(osc, "\033\\");
-        tam_tty_write(&app->tty, osc, tam_str_len(osc));
-        tam_str_free(osc);
+    if (!app->opts.linux_vt && app->tty.interactive &&
+        tam_tty_osc52_copy(&app->tty, text, strlen(text)) < 0 && errno == EMSGSIZE) {
+        app_set_status(app, "Too large for the terminal clipboard; kept here only");
+        return;
     }
     app_set_status(app, "Copied to clipboard: %s", text);
 }
@@ -528,28 +512,15 @@ static void app_open_in_external_editor(knox_app_t *app)
     char line_arg[32];
     snprintf(line_arg, sizeof(line_arg), "+%zu", line_1based);
 
-    /* Temporarily restore cooked terminal mode while running editor */
-    tam_tty_mouse(&app->tty, false);
-    tam_tty_paste(&app->tty, false);
-    tam_tty_cursor_visible(&app->tty, true);
-    tam_tty_alt_screen(&app->tty, false);
-    tam_tty_raw(&app->tty, false);
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp(editor, editor, line_arg, path, (char *)NULL);
-        execlp("tam-edit", "tam-edit", path, (char *)NULL);
-        _exit(127);
-    } else if (pid > 0) {
-        int status = 0;
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-            ;
+    /* Leave the terminal as the editor expects it; tam-knox ignores
+     * Ctrl+C until the editor ends, and comes back with the modes it had. */
+    tam_tty_suspend(&app->tty);
+    const char *with_line[] = { editor, line_arg, path, NULL };
+    if (tam_run_foreground(with_line, NULL) < 0 && errno == ENOENT) {
+        const char *fallback[] = { "tam-edit", path, NULL };
+        (void)tam_run_foreground(fallback, NULL);
     }
-
-    tam_tty_raw(&app->tty, true);
-    tam_tty_alt_screen(&app->tty, true);
-    tam_tty_cursor_visible(&app->tty, false);
-    tam_tty_paste(&app->tty, true);
+    tam_tty_resume(&app->tty);
 
     /* Refresh repo status and open file buffer after edit */
     if (app->active_repo_idx < app->ws.count)
@@ -2972,8 +2943,36 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
     }
 }
 
+/* True for the modals that take typed text. */
+static bool modal_takes_text(int modal)
+{
+    return modal == MODAL_PALETTE || modal == MODAL_SEARCH || modal == MODAL_COMMIT ||
+           modal == MODAL_BRANCH || modal == MODAL_BRANCH_CREATE ||
+           modal == MODAL_STASH_PUSH;
+}
+
 static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
 {
+    /* Pasted text goes only into a text prompt, as if typed: newlines and
+     * tabs become spaces (every prompt is one line) and other control
+     * bytes are dropped. It never reaches a command, so pasting cannot
+     * run one. */
+    if (ev->type == TAM_KEY_PASTE_BEGIN || ev->type == TAM_KEY_PASTE_END ||
+        ev->type == TAM_KEY_MOUSE)
+        return;
+    if (ev->type == TAM_KEY_PASTE) {
+        for (size_t i = 0; i < ev->len && modal_takes_text(app->modal); i++) {
+            unsigned char c = (unsigned char)ev->text[i];
+            if (c == '\n' || c == '\r' || c == '\t')
+                c = ' ';
+            if (c < 0x20 || c >= 0x7f)
+                continue;
+            tam_key_event_t ch = {.type = TAM_KEY_CHAR, .codepoint = c};
+            handle_modal_key(app, &ch);
+        }
+        return;
+    }
+
     if (app->modal != MODAL_NONE) {
         handle_modal_key(app, ev);
         return;
@@ -2991,7 +2990,8 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
 
     /* 1. Universal Ctrl map (from tam-idol/keys/keybindings.md) */
     if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL)) {
-        uint32_t c = tolower((unsigned char)ev->codepoint);
+        uint32_t c = ev->codepoint < 0x80 ? (uint32_t)tolower((int)ev->codepoint)
+                                          : ev->codepoint;
         switch (c) {
         case 'q': app_execute_widget(app, "quit"); return;
         case 'g': app_execute_widget(app, "guidance"); return;
@@ -3003,13 +3003,20 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'c': app_execute_widget(app, "copy"); return;
         case 's': app_execute_widget(app, "commit-prompt"); return;
         case 'l': return; /* Redraws at end of loop */
+        case 'p': /* Pause: stop until the shell continues us. SIGSTOP, as
+                   * SIGTSTP is discarded for a session leader. */
+            tam_tty_suspend(&app->tty);
+            (void)raise(SIGSTOP);
+            tam_tty_resume(&app->tty);
+            return;
         default:  return; /* No double-acting Ctrl codes */
         }
     }
 
     /* 2. Alt chords */
     if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_ALT)) {
-        uint32_t c = tolower((unsigned char)ev->codepoint);
+        uint32_t c = ev->codepoint < 0x80 ? (uint32_t)tolower((int)ev->codepoint)
+                                          : ev->codepoint;
         switch (c) {
         case '1': app_execute_widget(app, "view-source-control"); return;
         case '2': app_execute_widget(app, "view-explorer"); return;
@@ -3235,7 +3242,8 @@ int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
     app.focus = FOCUS_SIDEBAR_REPOS;
     app.running = true;
 
-    if (tam_tty_open(&app.tty, STDIN_FILENO, STDOUT_FILENO) != 0) {
+    if (tam_tty_open(&app.tty, STDIN_FILENO, STDOUT_FILENO) != 0 ||
+        !app.tty.interactive) {
         fprintf(stderr, "tam-knox: standard input and output must be a terminal\n");
         return 1;
     }
@@ -3266,6 +3274,9 @@ int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
     tam_tty_alt_screen(&app.tty, true);
     tam_tty_cursor_visible(&app.tty, false);
     tam_tty_paste(&app.tty, true);
+    /* SIGTERM, SIGHUP, a crash or an exit without cleanup put the terminal
+     * back as it was. */
+    (void)tam_tty_install_restore(&app.tty);
     tam_key_init(&app.keys);
 
     app_draw(&app);

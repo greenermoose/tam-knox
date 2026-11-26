@@ -1,0 +1,42 @@
+W8 ONTO LIBTAM'S SHARED CODE (TAM-KNOX 1.1.0)
+
+Date: 2026-11-26
+AI harness: Claude Code 2.1.332
+AI model: claude-opus-5-5
+Continues: W7
+
+
+GUIDANCE
+
+  Fred: "Move each program onto the shared code."
+
+
+DONE
+
+  - Paste: TAM_KEY_PASTE goes into the text prompts (palette, find,
+    commit, branch filter and name, stash message) as typed characters,
+    newlines and tabs as spaces, other control bytes dropped; outside a
+    prompt it is ignored, so pasted text can no longer run commands.
+    test-pty pastes into Find and pastes "q" outside a prompt.
+  - Terminal: a real not-a-terminal check (tty.interactive),
+    tam_tty_install_restore (SIGTERM, SIGHUP, crashes, exits), the
+    documented Ctrl+P pause (suspend, SIGSTOP, resume), tam_locale_init.
+  - The external editor runs through tam_tty_suspend, tam_run_foreground
+    (Ctrl+C no longer reaches tam-knox) and tam_tty_resume, retrying
+    tam-edit when the editor is missing.
+  - OSC 52 is tam_tty_osc52_copy (too-large copies are reported).
+  - Key names are tam_key_name_parse/format and lookups compare fields
+    exactly, so Alt+Shift bindings match; Ctrl and Alt chords no longer
+    truncate code points above 255.
+  - make test and make sanitize pass.
+
+
+FAILED
+
+  - Nothing.
+
+
+HANDOFF
+
+  - Left: the four identical xstrdup helpers, the SGR-aware clip (no
+    libtam equivalent), and the SIGWINCH flag.

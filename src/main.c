@@ -1,5 +1,7 @@
 #include "knox.h"
 
+#include <tam_uni.h>
+
 #include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +27,7 @@ static void print_usage(FILE *out)
 
 int main(int argc, char **argv)
 {
-    setlocale(LC_CTYPE, "");
+    tam_locale_init();
     bool mode_status = false;
     bool mode_graph = false;
     size_t graph_limit = 30;

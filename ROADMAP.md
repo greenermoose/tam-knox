@@ -22,3 +22,4 @@ viewer, written in C11 on top of `libtam`.
 | **1.0.6** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Move keybinding documentation to `keys/keybindings.md` and switch `tab-prev`/`tab-next` from `Alt+,`/`Alt+.` to `Alt+[`/`Alt+]` per `tam-idol/keys/keybindings.md` | Done (2026-11-25) |
 | **1.0.7** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Build against libtam 0.10.0; keep every key of a large read (paste or burst) instead of dropping reads over 64 bytes | Done (2026-11-26) |
 | **1.0.8** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Link libtam-render (libtam 0.13.0) instead of carrying a copy of tam-view's renderer; about 4,400 lines removed | Done (2026-11-26) |
+| **1.1.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Paste into prompts (never as commands), Ctrl+P pause, crash and SIGTERM restore, a real not-a-terminal check, the editor run, OSC 52 and key names through libtam; Alt+Shift bindings now match | Done (2026-11-26) |

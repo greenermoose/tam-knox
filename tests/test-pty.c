@@ -458,8 +458,19 @@ static void test_pty_tab_number_select(const char *bin)
     /* Digits typed in search modal ('/1230') stay in prompt and don't switch tabs */
     assert(write(mfd, "/1230", 5) == 5);
     assert(wait_for_pty_text(mfd, out, sizeof(out), "Find: 1230", 3000));
+
+    /* A bracketed paste lands in the prompt, lines joined by a space */
+    static const char paste[] = "\033[200~qz\nx\033[201~";
+    assert(write(mfd, paste, sizeof(paste) - 1) == (ssize_t)(sizeof(paste) - 1));
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Find: 1230qz x", 3000));
     assert(write(mfd, "\033", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 150);
+
+    /* Pasted text outside a prompt never runs as commands: "q" would quit */
+    static const char paste_q[] = "\033[200~q\033[201~";
+    assert(write(mfd, paste_q, sizeof(paste_q) - 1) == (ssize_t)(sizeof(paste_q) - 1));
+    drain_pty(mfd, out, sizeof(out), 200);
+    assert(waitpid(pid, NULL, WNOHANG) == 0);
 
     /* Quit cleanly */
     assert(write(mfd, "\x11", 1) == 1);

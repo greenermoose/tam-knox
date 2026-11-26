@@ -96,118 +96,20 @@ bool knox_keymap_is_valid_widget(const char *widget)
     return false;
 }
 
-static char *trim_local(char *s)
-{
-    while (*s && isspace((unsigned char)*s))
-        s++;
-    size_t len = strlen(s);
-    while (len > 0 && isspace((unsigned char)s[len - 1]))
-        s[--len] = '\0';
-    return s;
-}
-
 bool knox_keymap_parse_key(const char *spec, tam_key_type_t *out_type,
                            uint32_t *out_cp, unsigned *out_mods)
 {
-    if (!spec || !*spec || !out_type || !out_cp || !out_mods)
+    /* libtam's key names: the result is exactly what tam_key reports for
+     * that key, so lookups compare fields directly. Meta is refused (it
+     * belongs to tam-pane). */
+    if (!spec || !out_type || !out_cp || !out_mods)
         return false;
-
-    char buf[128];
-    snprintf(buf, sizeof(buf), "%s", spec);
-    const char *p = trim_local(buf);
-    if (!*p)
+    tam_key_event_t ev;
+    if (!tam_key_name_parse(spec, &ev))
         return false;
-
-    unsigned mods = 0;
-    while (*p) {
-        if (strncasecmp(p, "meta", 4) == 0 && (p[4] == '+' || p[4] == '-')) {
-            /* Meta belongs exclusively to tam-pane (Tamlinux keybinding standard). */
-            return false;
-        } else if (strncasecmp(p, "ctrl", 4) == 0 && (p[4] == '+' || p[4] == '-')) {
-            mods |= TAM_MOD_CTRL;
-            p += 5;
-        } else if (strncasecmp(p, "alt", 3) == 0 && (p[3] == '+' || p[3] == '-')) {
-            mods |= TAM_MOD_ALT;
-            p += 4;
-        } else if (strncasecmp(p, "shift", 5) == 0 && (p[5] == '+' || p[5] == '-')) {
-            mods |= TAM_MOD_SHIFT;
-            p += 6;
-        } else {
-            break;
-        }
-    }
-
-    if (!*p)
-        return false;
-
-    tam_key_type_t type = TAM_KEY_NONE;
-    uint32_t cp = 0;
-
-    if (strcasecmp(p, "enter") == 0 || strcasecmp(p, "return") == 0) {
-        type = TAM_KEY_ENTER;
-    } else if (strcasecmp(p, "tab") == 0) {
-        type = TAM_KEY_TAB;
-    } else if (strcasecmp(p, "backtab") == 0) {
-        type = TAM_KEY_TAB;
-        mods |= TAM_MOD_SHIFT;
-    } else if (strcasecmp(p, "backspace") == 0) {
-        type = TAM_KEY_BACKSPACE;
-    } else if (strcasecmp(p, "escape") == 0 || strcasecmp(p, "esc") == 0) {
-        type = TAM_KEY_ESC;
-    } else if (strcasecmp(p, "space") == 0) {
-        type = TAM_KEY_CHAR;
-        cp = ' ';
-    } else if (strcasecmp(p, "up") == 0) {
-        type = TAM_KEY_UP;
-    } else if (strcasecmp(p, "down") == 0) {
-        type = TAM_KEY_DOWN;
-    } else if (strcasecmp(p, "left") == 0) {
-        type = TAM_KEY_LEFT;
-    } else if (strcasecmp(p, "right") == 0) {
-        type = TAM_KEY_RIGHT;
-    } else if (strcasecmp(p, "home") == 0) {
-        type = TAM_KEY_HOME;
-    } else if (strcasecmp(p, "end") == 0) {
-        type = TAM_KEY_END;
-    } else if (strcasecmp(p, "pageup") == 0 || strcasecmp(p, "pgup") == 0) {
-        type = TAM_KEY_PAGE_UP;
-    } else if (strcasecmp(p, "pagedown") == 0 || strcasecmp(p, "pgdn") == 0) {
-        type = TAM_KEY_PAGE_DOWN;
-    } else if (strcasecmp(p, "insert") == 0 || strcasecmp(p, "ins") == 0) {
-        type = TAM_KEY_INSERT;
-    } else if (strcasecmp(p, "delete") == 0 || strcasecmp(p, "del") == 0) {
-        type = TAM_KEY_DELETE;
-    } else if ((p[0] == 'f' || p[0] == 'F') && isdigit((unsigned char)p[1])) {
-        char *end = NULL;
-        long fnum = strtol(p + 1, &end, 10);
-        if (!end || *end != '\0' || fnum < 1 || fnum > 12)
-            return false;
-        type = (tam_key_type_t)(TAM_KEY_F1 + (fnum - 1));
-    } else if (strlen(p) == 1 && (unsigned char)p[0] >= 0x20 &&
-               (unsigned char)p[0] < 0x7f) {
-        type = TAM_KEY_CHAR;
-        unsigned char ch = (unsigned char)p[0];
-        if (mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) {
-            cp = (uint32_t)tolower(ch);
-            if ((mods & TAM_MOD_CTRL) && cp == '\\')
-                cp = '|'; /* Matches tam_key's 0x1c -> 'a' + 27 decoding */
-        } else if (mods & TAM_MOD_SHIFT) {
-            const char *plain = "`1234567890-=[]\\;',./";
-            const char *shifted = "~!@#$%^&*()_+{}|:\"<>?";
-            const char *found = strchr(plain, (int)tolower(ch));
-            cp = found ? (uint32_t)(unsigned char)shifted[found - plain]
-                       : (uint32_t)toupper(ch);
-            mods &= ~TAM_MOD_SHIFT;
-        } else {
-            cp = (uint32_t)ch;
-        }
-    } else {
-        return false;
-    }
-
-    *out_type = type;
-    *out_cp = cp;
-    *out_mods = mods;
+    *out_type = ev.type;
+    *out_cp = ev.codepoint;
+    *out_mods = ev.mods;
     return true;
 }
 
@@ -216,60 +118,8 @@ void knox_keymap_format_key(tam_key_type_t type, uint32_t cp,
 {
     if (!out || cap == 0)
         return;
-
-    char prefix[32] = "";
-    if (mods & TAM_MOD_CTRL)
-        strncat(prefix, "Ctrl+", sizeof(prefix) - strlen(prefix) - 1);
-    if (mods & TAM_MOD_ALT)
-        strncat(prefix, "Alt+", sizeof(prefix) - strlen(prefix) - 1);
-    if (mods & TAM_MOD_SHIFT)
-        strncat(prefix, "Shift+", sizeof(prefix) - strlen(prefix) - 1);
-
-    const char *kname = NULL;
-    char ch_buf[16] = "";
-    switch (type) {
-    case TAM_KEY_ENTER:     kname = "Enter"; break;
-    case TAM_KEY_TAB:       kname = "Tab"; break;
-    case TAM_KEY_BACKSPACE: kname = "Backspace"; break;
-    case TAM_KEY_ESC:       kname = "Escape"; break;
-    case TAM_KEY_UP:        kname = "Up"; break;
-    case TAM_KEY_DOWN:      kname = "Down"; break;
-    case TAM_KEY_LEFT:      kname = "Left"; break;
-    case TAM_KEY_RIGHT:     kname = "Right"; break;
-    case TAM_KEY_HOME:      kname = "Home"; break;
-    case TAM_KEY_END:       kname = "End"; break;
-    case TAM_KEY_PAGE_UP:   kname = "PageUp"; break;
-    case TAM_KEY_PAGE_DOWN: kname = "PageDown"; break;
-    case TAM_KEY_INSERT:    kname = "Insert"; break;
-    case TAM_KEY_DELETE:    kname = "Delete"; break;
-    case TAM_KEY_CHAR:
-        if (cp == ' ') {
-            kname = "Space";
-        } else if ((mods & TAM_MOD_CTRL) && cp == '|') {
-            kname = "\\";
-        } else if ((mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
-                   cp >= 'a' && cp <= 'z') {
-            snprintf(ch_buf, sizeof(ch_buf), "%c", (char)toupper((int)cp));
-            kname = ch_buf;
-        } else if (cp >= 0x21 && cp < 0x7f) {
-            snprintf(ch_buf, sizeof(ch_buf), "%c", (char)cp);
-            kname = ch_buf;
-        } else {
-            snprintf(ch_buf, sizeof(ch_buf), "U+%X", cp);
-            kname = ch_buf;
-        }
-        break;
-    default:
-        if (type >= TAM_KEY_F1 && type <= TAM_KEY_F12) {
-            snprintf(ch_buf, sizeof(ch_buf), "F%d",
-                     (int)(type - TAM_KEY_F1 + 1));
-            kname = ch_buf;
-        } else {
-            kname = "?";
-        }
-        break;
-    }
-    snprintf(out, cap, "%s%s", prefix, kname);
+    tam_key_event_t ev = {.type = type, .codepoint = cp, .mods = mods};
+    (void)tam_key_name_format(&ev, out, cap);
 }
 
 static bool keymap_upsert(knox_keymap_t *km, tam_key_type_t type,
@@ -404,12 +254,9 @@ const char *knox_keymap_lookup(const knox_keymap_t *km,
     if (!km || !ev || km->count == 0)
         return NULL;
 
+    /* Parsed names match decoded events field for field. */
     uint32_t cp = ev->codepoint;
     unsigned mods = ev->mods;
-    if (ev->type == TAM_KEY_CHAR && (mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
-        cp >= 'A' && cp <= 'Z') {
-        cp = (uint32_t)tolower((int)cp);
-    }
 
     for (size_t i = 0; i < km->count; i++) {
         const knox_keybind_t *e = &km->entries[i];
