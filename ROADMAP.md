@@ -24,3 +24,4 @@ viewer, written in C17 on top of `libtam`.
 | **1.0.8** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Link libtam-render (libtam 0.13.0) instead of carrying a copy of tam-view's renderer; about 4,400 lines removed | Done (2026-11-26) |
 | **1.1.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Paste into prompts (never as commands), Ctrl+P pause, crash and SIGTERM restore, a real not-a-terminal check, the editor run, OSC 52 and key names through libtam; Alt+Shift bindings now match | Done (2026-11-26) |
 | **1.1.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Ctrl+P pauses through libtam 0.14.1's `tam_tty_job_stop`, which also pauses a session leader | Done (2026-11-26) |
+| **1.1.2** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Guidance modal (`g`): responsive width (~80% wide, higher narrow), word-wrapped descriptions, complete keybindings (`f`/`F`, navigation, modals), and vertical scrolling | Done (2026-11-26) |

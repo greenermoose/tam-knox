@@ -51,22 +51,30 @@ typedef struct {
 static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "view-source-control", "Alt+1 / Bksp",  "Switch left sidebar to Source Control (Repos + Changes)" },
     { "view-explorer",       "Alt+2",         "Switch left sidebar to Folder Explorer tree" },
-    { "explore-repo",        "Enter (Repos)", "Open and expand active repository in Folder Explorer" },
+    { "explore-repo",        "Enter / Right", "Open and expand active repository in Folder Explorer (Repos)" },
     { "view-graph",          "Alt+3",         "Focus or open the Git Graph tab" },
     { "toggle-sidebar",      "Alt+B",         "Show or hide the left sidebar" },
     { "focus-next",          "Tab",           "Cycle focus across Sidebar and Main Workbench panes" },
     { "focus-prev",          "Shift+Tab",     "Cycle focus backward" },
     { "open-or-inspect",     "Enter",         "Explore repo, expand folder, open file, or inspect commit" },
     { "stage-or-page-down",  "Space",         "Stage/unstage file in Changes, or page down in viewer" },
-    { "repo-fetch",          "f",             "Fetch active repository from remote (git fetch --prune)" },
-    { "repo-sync",           "s / Alt+S",     "Sync active repository with remote (fetch, pull --ff-only, push)" },
-    { "fetch-all",           "Alt+A / F",     "Fetch all repositories with remotes (git fetch --prune)" },
+    { "move-up",             "Up / k",        "Move selection or cursor up one item or line" },
+    { "move-down",           "Down / j",      "Move selection or cursor down one item or line" },
+    { "page-up",             "PageUp / b",    "Scroll or move selection up one page (12 lines)" },
+    { "page-down",           "PageDown",      "Scroll or move selection down one page (12 lines)" },
+    { "jump-top",            "Home / Alt+<",  "Jump to first item or top of document" },
+    { "jump-bottom",         "End / Alt+>",   "Jump to last item or bottom of document" },
+    { "scroll-left",         "Left",          "Collapse folder, return to Explorer, or scroll Viewer left" },
+    { "scroll-right",        "Right",         "Explore repo, expand/open in Explorer, or scroll Viewer right" },
+    { "repo-fetch",          "f",             "Fetch active repository only from remote (git fetch --prune)" },
+    { "fetch-all",           "F / Alt+A",     "Fetch all repositories with remotes (git fetch --prune)" },
+    { "repo-sync",           "s / S / Alt+S", "Sync active repository with remote (fetch, pull --ff-only, push)" },
     { "commit-prompt",       "Alt+C / Ctrl+S","Commit staged changes in active repository" },
-    { "branch-modal",        "Alt+K / c",     "Checkout or create a branch in active repository" },
-    { "stash-modal",         "Alt+Z / z",     "Manage stashes (list, push, inspect diff, apply, pop, drop)" },
-    { "toggle-diff-split",   "d / Alt+D",     "Toggle Side-by-Side Split Diff vs. Unified Diff mode" },
+    { "branch-modal",        "c / C / Alt+K", "Checkout or create a branch in active repository" },
+    { "stash-modal",         "z / Z / Alt+Z", "Manage stashes (list, push, inspect diff, apply, pop, drop)" },
+    { "toggle-diff-split",   "d / D / Alt+D", "Toggle Side-by-Side Split Diff vs. Unified Diff mode" },
     { "open-in-editor",      "Alt+E",         "Open current file at current line in tam-edit" },
-    { "toggle-render-mode",  "R / Alt+R",     "Toggle Rendered (MD/HTML/Mermaid) vs. Raw Syntax view" },
+    { "toggle-render-mode",  "r / R / Alt+R", "Toggle Rendered (MD/HTML/Mermaid) vs. Raw Syntax view" },
     { "cycle-branch-filter", "B / Alt+F",     "Toggle Git Graph between All Branches and HEAD" },
     { "split-vertical",      "Alt+V",         "Split active main pane side-by-side (left / right)" },
     { "split-horizontal",    "Alt+H",         "Split active main pane stacked (top / bottom)" },
@@ -81,12 +89,23 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "update",              "Ctrl+U",        "Refresh repository statuses, commit graph, and explorer" },
     { "copy",                "Ctrl+C",        "Copy selection, commit hash, or file path (OSC 52)" },
     { "execute",             "Ctrl+E",        "Open Command Palette & One-Handed Chord Composer" },
-    { "guidance",            "g / Ctrl+G",    "Show keybinding guidance overlay" },
+    { "guidance",            "g / G / Ctrl+G","Show keybinding guidance overlay" },
+    { "cancel-mode",         "Esc / Ctrl+\\", "Close modal/prompt, collapse commit details, or clear filter" },
     { "clear-screen",        "Ctrl+L",        "Clear and redraw terminal screen" },
-    { "quit",                "Ctrl+Q / q",    "Quit tam-knox" }
+    { "quit",                "q / Q / Ctrl+Q","Quit tam-knox" }
 };
 
 #define WIDGET_COUNT (sizeof(WIDGET_TABLE) / sizeof(WIDGET_TABLE[0]))
+
+static const knox_widget_cmd_t GUIDANCE_EXTRA_TABLE[] = {
+    { "tab-1..tab-0", "(tabs)",         "1-9, 0: Select workbench tab 1-10 directly (0 selects tab 10)" },
+    { "(commit file)","v",              "In Commit Detail inspector, view full file snapshot at commit in a new tab" },
+    { "(Branch modal)","Enter / Alt+N", "Enter: checkout branch, Alt+N: create branch, type to filter, Esc: close" },
+    { "(Stash modal)", "n/a/p/d/Enter", "n/s: push, Enter: diff, a: apply, p: pop, d/x: drop, j/k: move, q/Esc: close" },
+    { "(Guidance)",    "Up/Dn/PgUp/Dn", "Scroll guidance (j/k, b/Space, Home/End); g/q/Esc close (* = keymap.ini override)" }
+};
+
+#define GUIDANCE_EXTRA_COUNT (sizeof(GUIDANCE_EXTRA_TABLE) / sizeof(GUIDANCE_EXTRA_TABLE[0]))
 
 typedef struct {
     knox_options_t      opts;
@@ -122,6 +141,7 @@ typedef struct {
     char                prompt_buf[256];
     size_t              prompt_len;
     size_t              palette_cursor;
+    size_t              guidance_top;
     unsigned            chord_mods; /* Latched modifiers in Ctrl+E composer */
     /* Branch & Stash modal lists */
     knox_branch_info_t *branch_list;
@@ -1650,6 +1670,110 @@ static void render_modal_border(const knox_app_t *app, tam_str_t *frame,
     }
 }
 
+typedef struct {
+    char **lines;
+    size_t count;
+    size_t cap;
+} guidance_lines_t;
+
+static void guidance_lines_push(guidance_lines_t *gl, const char *line)
+{
+    if (!gl || !line)
+        return;
+    if (gl->count >= gl->cap) {
+        size_t ncap = gl->cap ? gl->cap * 2 : 64;
+        char **nl = realloc(gl->lines, ncap * sizeof(*nl));
+        if (!nl)
+            return;
+        gl->lines = nl;
+        gl->cap = ncap;
+    }
+    char *copy = strdup(line);
+    if (copy)
+        gl->lines[gl->count++] = copy;
+}
+
+static void guidance_lines_free(guidance_lines_t *gl)
+{
+    if (!gl)
+        return;
+    for (size_t i = 0; i < gl->count; i++)
+        free(gl->lines[i]);
+    free(gl->lines);
+    gl->lines = NULL;
+    gl->count = 0;
+    gl->cap = 0;
+}
+
+static void guidance_append_wrapped(guidance_lines_t *gl, int box_w,
+                                    const char *keys, const char *name,
+                                    const char *desc)
+{
+    const int desc_col = 42; /* "  %-16s %-22s " */
+    const char *d = desc ? desc : "";
+
+    if (box_w >= 58) {
+        int desc_w = box_w - desc_col - 1;
+        if (desc_w < 12)
+            desc_w = 12;
+        bool first = true;
+        while (*d || first) {
+            while (*d == ' ' && !first)
+                d++;
+            if (!*d && !first)
+                break;
+            size_t len = strlen(d);
+            size_t take = len;
+            if ((int)len > desc_w) {
+                take = (size_t)desc_w;
+                while (take > 0 && d[take] != ' ')
+                    take--;
+                if (take == 0)
+                    take = (size_t)desc_w;
+            }
+            char line[512];
+            if (first) {
+                snprintf(line, sizeof(line), "  %-16s %-22s %.*s",
+                         keys, name, (int)take, d);
+                first = false;
+            } else {
+                snprintf(line, sizeof(line), "%*s%.*s",
+                         desc_col, "", (int)take, d);
+            }
+            guidance_lines_push(gl, line);
+            d += take;
+            if (!*d)
+                break;
+        }
+    } else {
+        char hdr[256];
+        snprintf(hdr, sizeof(hdr), "  %s  (%s)", keys, name);
+        guidance_lines_push(gl, hdr);
+        int desc_w = box_w - 5;
+        if (desc_w < 12)
+            desc_w = 12;
+        while (*d) {
+            while (*d == ' ')
+                d++;
+            if (!*d)
+                break;
+            size_t len = strlen(d);
+            size_t take = len;
+            if ((int)len > desc_w) {
+                take = (size_t)desc_w;
+                while (take > 0 && d[take] != ' ')
+                    take--;
+                if (take == 0)
+                    take = (size_t)desc_w;
+            }
+            char line[512];
+            snprintf(line, sizeof(line), "    %.*s", (int)take, d);
+            guidance_lines_push(gl, line);
+            d += take;
+        }
+    }
+}
+
 static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
                                  int rows, int cols)
 {
@@ -1680,14 +1804,12 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
         return;
     }
 
-    int box_w = cols - 10;
-    if (box_w > 86)
-        box_w = 86;
+    int pct80 = (cols * 4) / 5;
+    int target_w = (pct80 > 74) ? pct80 : 74;
+    int box_w = (cols - 6 < target_w) ? (cols - 6) : target_w;
     if (box_w < 30)
         box_w = cols;
     int box_h = rows - 4;
-    if (box_h > 26)
-        box_h = 26;
     if (box_h < 8)
         box_h = rows - 2;
 
@@ -1701,28 +1823,48 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
     render_modal_border(app, frame, rows, cols, x0, y0, box_w, box_h);
 
     if (app->modal == MODAL_GUIDANCE) {
-        frame_move_write(frame, y0, x0,
-                         " tam-knox Keybinding Guidance (Press g, Esc, or Ctrl+G to close)",
-                         box_w, hdr_bg, true);
-        for (int r = 1; r < box_h; r++) {
-            size_t idx = (size_t)(r - 1);
-            char line[256] = "";
-            if (idx < WIDGET_COUNT) {
-                char key_disp[40];
-                char custom_key[32];
-                if (knox_keymap_find_widget_key(&app->keymap, WIDGET_TABLE[idx].name,
-                                                custom_key, sizeof(custom_key))) {
-                    snprintf(key_disp, sizeof(key_disp), "%s*", custom_key);
-                } else {
-                    snprintf(key_disp, sizeof(key_disp), "%s", WIDGET_TABLE[idx].keys);
-                }
-                snprintf(line, sizeof(line), "  %-16s %-22s %s",
-                         key_disp,
-                         WIDGET_TABLE[idx].name,
-                         WIDGET_TABLE[idx].desc);
+        guidance_lines_t gl = {0};
+        for (size_t i = 0; i < WIDGET_COUNT; i++) {
+            char key_disp[40];
+            char custom_key[32];
+            if (knox_keymap_find_widget_key(&app->keymap, WIDGET_TABLE[i].name,
+                                            custom_key, sizeof(custom_key))) {
+                snprintf(key_disp, sizeof(key_disp), "%s*", custom_key);
+            } else {
+                snprintf(key_disp, sizeof(key_disp), "%s", WIDGET_TABLE[i].keys);
             }
+            guidance_append_wrapped(&gl, box_w, key_disp,
+                                    WIDGET_TABLE[i].name, WIDGET_TABLE[i].desc);
+        }
+        for (size_t i = 0; i < GUIDANCE_EXTRA_COUNT; i++) {
+            guidance_append_wrapped(&gl, box_w,
+                                    GUIDANCE_EXTRA_TABLE[i].keys,
+                                    GUIDANCE_EXTRA_TABLE[i].name,
+                                    GUIDANCE_EXTRA_TABLE[i].desc);
+        }
+
+        size_t list_rows = (box_h > 1) ? (size_t)(box_h - 1) : 0;
+        size_t max_top = (gl.count > list_rows) ? (gl.count - list_rows) : 0;
+        if (app->guidance_top > max_top)
+            app->guidance_top = max_top;
+
+        size_t first_row = gl.count ? (app->guidance_top + 1) : 0;
+        size_t last_row = app->guidance_top + list_rows;
+        if (last_row > gl.count)
+            last_row = gl.count;
+
+        char title[256];
+        snprintf(title, sizeof(title),
+                 " tam-knox Keybinding Guidance [%zu-%zu/%zu] (Up/Down/PgUp/PgDn: scroll | g/Esc: close)",
+                 first_row, last_row, gl.count);
+        frame_move_write(frame, y0, x0, title, box_w, hdr_bg, true);
+
+        for (int r = 1; r < box_h; r++) {
+            size_t idx = app->guidance_top + (size_t)(r - 1);
+            const char *line = (idx < gl.count) ? gl.lines[idx] : "";
             frame_move_write(frame, y0 + r, x0, line, box_w, bg, true);
         }
+        guidance_lines_free(&gl);
     } else if (app->modal == MODAL_PALETTE) {
         char mod_str[64] = "";
         if (app->chord_mods & TAM_MOD_CTRL)  strcat(mod_str, "Ctrl+");
@@ -2146,7 +2288,12 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
     if (strcmp(widget, "quit") == 0) {
         app->running = false;
     } else if (strcmp(widget, "guidance") == 0) {
-        app->modal = (app->modal == MODAL_GUIDANCE) ? MODAL_NONE : MODAL_GUIDANCE;
+        if (app->modal == MODAL_GUIDANCE) {
+            app->modal = MODAL_NONE;
+        } else {
+            app->modal = MODAL_GUIDANCE;
+            app->guidance_top = 0;
+        }
     } else if (strcmp(widget, "execute") == 0) {
         app->modal = MODAL_PALETTE;
         app->prompt_buf[0] = '\0';
@@ -2767,6 +2914,43 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
     }
 
     if (app->modal == MODAL_GUIDANCE) {
+        if (ev->type == TAM_KEY_UP ||
+            (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
+             ev->codepoint == 'k')) {
+            if (app->guidance_top > 0)
+                app->guidance_top--;
+            return;
+        }
+        if (ev->type == TAM_KEY_DOWN ||
+            (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
+             ev->codepoint == 'j')) {
+            app->guidance_top++;
+            return;
+        }
+        if (ev->type == TAM_KEY_PAGE_UP ||
+            (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
+             ev->codepoint == 'b')) {
+            app->guidance_top = (app->guidance_top > 12) ? app->guidance_top - 12 : 0;
+            return;
+        }
+        if (ev->type == TAM_KEY_PAGE_DOWN ||
+            (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
+             ev->codepoint == ' ')) {
+            app->guidance_top += 12;
+            return;
+        }
+        if (ev->type == TAM_KEY_HOME ||
+            (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_ALT) &&
+             ev->codepoint == '<')) {
+            app->guidance_top = 0;
+            return;
+        }
+        if (ev->type == TAM_KEY_END ||
+            (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_ALT) &&
+             ev->codepoint == '>')) {
+            app->guidance_top = (size_t)-1;
+            return;
+        }
         if (ev->type == TAM_KEY_CHAR &&
             (ev->codepoint == 'q' || ev->codepoint == 'Q' ||
              ev->codepoint == 'g' || ev->codepoint == 'G'))

@@ -571,12 +571,12 @@ int main(int argc, char **argv)
     assert(write(mfd, "\033k", 2) == 2);
     drain_pty(mfd, out, sizeof(out), 200);
     assert(strstr(out, "Branches: demo-repo") != NULL);
-    /* Centered modals (110x30 -> box 86x26 at x0=13, y0=3) draw a 1-row top/bottom
+    /* Centered modals (110x30 -> box 88x26 at x0=12, y0=3) draw a 1-row top/bottom
      * and 2-col left/right pure-black border (\033[48;5;16m) around the box. */
-    assert(strstr(out, "\033[2;11H\033[48;5;16m") != NULL);
-    assert(strstr(out, "\033[3;11H\033[48;5;16m  \033[0m") != NULL);
-    assert(strstr(out, "\033[3;99H\033[48;5;16m  \033[0m") != NULL);
-    assert(strstr(out, "\033[29;11H\033[48;5;16m") != NULL);
+    assert(strstr(out, "\033[2;10H\033[48;5;16m") != NULL);
+    assert(strstr(out, "\033[3;10H\033[48;5;16m  \033[0m") != NULL);
+    assert(strstr(out, "\033[3;100H\033[48;5;16m  \033[0m") != NULL);
+    assert(strstr(out, "\033[29;10H\033[48;5;16m") != NULL);
     assert(write(mfd, "\033", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 150);
 
@@ -622,11 +622,28 @@ int main(int argc, char **argv)
     assert(write(mfd, "\033[15~", 5) == 5); /* F5 bound to guidance via keymap.ini */
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Keybinding Guidance") != NULL);
+    assert(strstr(out, "view-source-control") != NULL);
+    assert(strstr(out, "\033[2;10H\033[48;5;16m") != NULL);
+    assert(strstr(out, "\033[3;10H\033[48;5;16m  \033[0m") != NULL);
+    assert(strstr(out, "\033[3;100H\033[48;5;16m  \033[0m") != NULL);
+    assert(strstr(out, "\033[29;10H\033[48;5;16m") != NULL);
+
+    /* Scroll down in guidance to verify f/F, F6*, and word-wrapped tail entries are reachable */
+    assert(write(mfd, "\033[6~", 4) == 4); /* PageDown */
+    drain_pty(mfd, out, sizeof(out), 150);
+    assert(strstr(out, "repo-fetch") != NULL);
     assert(strstr(out, "F6*") != NULL);
-    assert(strstr(out, "\033[2;11H\033[48;5;16m") != NULL);
-    assert(strstr(out, "\033[3;11H\033[48;5;16m  \033[0m") != NULL);
-    assert(strstr(out, "\033[3;99H\033[48;5;16m  \033[0m") != NULL);
-    assert(strstr(out, "\033[29;11H\033[48;5;16m") != NULL);
+
+    assert(write(mfd, "\033[F", 3) == 3); /* End jumps to bottom of guidance */
+    drain_pty(mfd, out, sizeof(out), 150);
+    assert(strstr(out, "(Guidance)") != NULL);
+    assert(strstr(out, "Stash modal") != NULL);
+    assert(strstr(out, "keymap.ini") != NULL);
+
+    /* Scroll back to top with Home */
+    assert(write(mfd, "\033[H", 3) == 3);
+    drain_pty(mfd, out, sizeof(out), 150);
+    assert(strstr(out, "view-source-control") != NULL);
 
     assert(write(mfd, "g\x11", 2) == 2); /* g closes guidance, then Ctrl+Q quits */
     drain_pty(mfd, out, sizeof(out), 200);

@@ -1,0 +1,20 @@
+W10-guidance-modal (2026-11-26)
+
+AI-Tool: Antigravity CLI
+AI-Model: Gemini 4 Hydrogen (Medium)
+
+Prompt:
+  Improve the guidance shown when you press g:
+  1) Responsive modal width (~80% on wide terminals, higher percentage on narrow)
+  2) Word wrap the help descriptions
+  3) Explain every keybinding (both f and F, navigation, modals, etc.)
+  4) Provide vertical scrolling through the complete list
+
+Changes (1.1.2):
+  - src/workbench.c: responsive centered modal width/height in
+    render_modal_overlay(), guidance_append_wrapped() word-wrapping helper,
+    complete WIDGET_TABLE + GUIDANCE_EXTRA_TABLE coverage, and guidance_top
+    scrolling (Up/k, Down/j, PageUp/b, PageDown/Space, Home/Alt+<, End/Alt+>).
+  - tests/test-pty.c: updated 110x30 modal border coordinates (88x26) and
+    added PTY checks for f/F, F6*, PageDown/End/Home scrolling.
+  - VERSION, ROADMAP.md, work/WHATNOW: bumped to 1.1.2.
