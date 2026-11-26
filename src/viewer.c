@@ -1,5 +1,5 @@
 #include "knox.h"
-#include "render_internal.h"
+#include <tam_render.h>
 
 #include <ctype.h>
 #include <stdio.h>
@@ -25,17 +25,17 @@ static bool has_suffix(const char *str, const char *ext)
     return slen >= elen && strcasecmp(str + slen - elen, ext) == 0;
 }
 
-static enum view_format detect_markup_format(const char *path)
+static enum tam_render_format detect_markup_format(const char *path)
 {
     if (!path)
-        return VIEW_FORMAT_RAW;
+        return TAM_RENDER_FORMAT_RAW;
     if (has_suffix(path, ".md") || has_suffix(path, ".markdown"))
-        return VIEW_FORMAT_MARKDOWN;
+        return TAM_RENDER_FORMAT_MARKDOWN;
     if (has_suffix(path, ".html") || has_suffix(path, ".htm"))
-        return VIEW_FORMAT_HTML;
+        return TAM_RENDER_FORMAT_HTML;
     if (has_suffix(path, ".mmd") || has_suffix(path, ".mermaid"))
-        return VIEW_FORMAT_MERMAID;
-    return VIEW_FORMAT_RAW;
+        return TAM_RENDER_FORMAT_MERMAID;
+    return TAM_RENDER_FORMAT_RAW;
 }
 
 static int index_text_lines(const char *text, size_t len,
@@ -125,7 +125,7 @@ void knox_viewer_free(knox_viewer_doc_t *doc)
     free(doc->line_offsets);
     free(doc->line_lengths);
     free(doc->line_states);
-    rbuf_free(&doc->rendered_buf);
+    tam_render_buf_free(&doc->rendered_buf);
     free(doc->rend_offsets);
     free(doc->rend_lengths);
     free(doc->sbs_rows);
@@ -324,7 +324,7 @@ int knox_viewer_toggle_side_by_side(knox_viewer_doc_t *doc)
 
 int knox_viewer_ensure_rendered(knox_viewer_doc_t *doc, int width, bool ascii)
 {
-    if (!doc || doc->markup_fmt == VIEW_FORMAT_RAW)
+    if (!doc || doc->markup_fmt == TAM_RENDER_FORMAT_RAW)
         return -1;
     if (width < 20)
         width = 20;
@@ -333,22 +333,22 @@ int knox_viewer_ensure_rendered(knox_viewer_doc_t *doc, int width, bool ascii)
         doc->rendered_ascii == ascii)
         return 0;
 
-    rbuf_free(&doc->rendered_buf);
-    rbuf_init(&doc->rendered_buf);
+    tam_render_buf_free(&doc->rendered_buf);
+    tam_render_buf_init(&doc->rendered_buf);
     free(doc->rend_offsets);
     free(doc->rend_lengths);
     doc->rend_offsets = NULL;
     doc->rend_lengths = NULL;
     doc->rend_line_count = 0;
 
-    if (doc->markup_fmt == VIEW_FORMAT_MARKDOWN) {
-        render_markdown(&doc->rendered_buf, doc->raw_text, doc->raw_len,
+    if (doc->markup_fmt == TAM_RENDER_FORMAT_MARKDOWN) {
+        tam_render_markdown(&doc->rendered_buf, doc->raw_text, doc->raw_len,
                         width, ascii);
-    } else if (doc->markup_fmt == VIEW_FORMAT_HTML) {
-        render_html(&doc->rendered_buf, doc->raw_text, doc->raw_len,
+    } else if (doc->markup_fmt == TAM_RENDER_FORMAT_HTML) {
+        tam_render_html(&doc->rendered_buf, doc->raw_text, doc->raw_len,
                     width, ascii);
-    } else if (doc->markup_fmt == VIEW_FORMAT_MERMAID) {
-        render_mermaid(&doc->rendered_buf, doc->raw_text, doc->raw_len,
+    } else if (doc->markup_fmt == TAM_RENDER_FORMAT_MERMAID) {
+        tam_render_mermaid(&doc->rendered_buf, doc->raw_text, doc->raw_len,
                        width, ascii);
     }
 
@@ -389,7 +389,7 @@ int knox_viewer_open_buffer(knox_viewer_doc_t *doc, knox_doc_kind_t kind,
         return -1;
 
     doc->lang = lang;
-    doc->markup_fmt = VIEW_FORMAT_RAW;
+    doc->markup_fmt = TAM_RENDER_FORMAT_RAW;
     doc->render_mode = false;
     doc->focused_link = -1;
     compute_lexer_states(doc);
@@ -434,7 +434,7 @@ int knox_viewer_open_file(knox_viewer_doc_t *doc, const char *abs_path,
 
     doc->abs_path = xstrdup(abs_path);
     doc->markup_fmt = detect_markup_format(abs_path);
-    if (prefer_render && doc->markup_fmt != VIEW_FORMAT_RAW) {
+    if (prefer_render && doc->markup_fmt != TAM_RENDER_FORMAT_RAW) {
         if (knox_viewer_ensure_rendered(doc, width, ascii) == 0)
             doc->render_mode = true;
     }
@@ -447,9 +447,9 @@ int knox_viewer_toggle_render(knox_viewer_doc_t *doc, int width, bool ascii)
         return -1;
     if (doc->kind == KNOX_DOC_DIFF)
         return knox_viewer_toggle_side_by_side(doc);
-    if (doc->markup_fmt == VIEW_FORMAT_RAW) {
+    if (doc->markup_fmt == TAM_RENDER_FORMAT_RAW) {
         /* Allow forcing Markdown render on plain text files like README */
-        doc->markup_fmt = VIEW_FORMAT_MARKDOWN;
+        doc->markup_fmt = TAM_RENDER_FORMAT_MARKDOWN;
     }
     if (!doc->render_mode) {
         if (knox_viewer_ensure_rendered(doc, width, ascii) != 0)

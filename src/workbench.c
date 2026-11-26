@@ -1,5 +1,5 @@
 #include "knox.h"
-#include "render_internal.h"
+#include <tam_render.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -689,7 +689,7 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 
     const char *bar_bg = (app->opts.color && !app->opts.linux_vt)
                          ? "\033[38;5;254;48;5;236m" : "\033[7m";
-    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+    const struct tam_render_box *bx = tam_render_box_chars(app->opts.ascii);
 
     char prefix_plain[256];
     snprintf(prefix_plain, sizeof(prefix_plain),
@@ -803,7 +803,7 @@ static void render_top_bar(knox_app_t *app, tam_str_t *frame, int cols)
 static void render_sidebar(knox_app_t *app, tam_str_t *frame,
                            int x, int y, int w, int h)
 {
-    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+    const struct tam_render_box *bx = tam_render_box_chars(app->opts.ascii);
 
     if (app->sidebar_mode == SIDEBAR_SOURCE_CONTROL) {
         int repos_h = (h * 55) / 100;
@@ -1300,30 +1300,30 @@ static void render_commit_detail_pane(knox_app_t *app, knox_pane_t *p,
 static const char *view_style_sgr(unsigned char style)
 {
     switch (style) {
-    case VIEW_STYLE_H1:         return "\033[1;4;36m";
-    case VIEW_STYLE_H2:         return "\033[1;36m";
-    case VIEW_STYLE_H3:         return "\033[1;34m";
-    case VIEW_STYLE_BOLD:       return "\033[1m";
-    case VIEW_STYLE_ITALIC:     return "\033[3m";
-    case VIEW_STYLE_STRIKE:     return "\033[9m";
-    case VIEW_STYLE_CODE:       return "\033[33m";
-    case VIEW_STYLE_LINK:       return "\033[4;34m";
-    case VIEW_STYLE_LINK_URL:   return "\033[90m";
-    case VIEW_STYLE_LINK_CUR:   return "\033[1;7;36m";
-    case VIEW_STYLE_QUOTE:      return "\033[32m";
-    case VIEW_STYLE_RULE:       return "\033[90m";
-    case VIEW_STYLE_TABLE_HDR:  return "\033[1;36m";
-    case VIEW_STYLE_NODE:       return "\033[1;36m";
-    case VIEW_STYLE_EDGE:       return "\033[33m";
+    case TAM_RENDER_STYLE_H1:         return "\033[1;4;36m";
+    case TAM_RENDER_STYLE_H2:         return "\033[1;36m";
+    case TAM_RENDER_STYLE_H3:         return "\033[1;34m";
+    case TAM_RENDER_STYLE_BOLD:       return "\033[1m";
+    case TAM_RENDER_STYLE_ITALIC:     return "\033[3m";
+    case TAM_RENDER_STYLE_STRIKE:     return "\033[9m";
+    case TAM_RENDER_STYLE_CODE:       return "\033[33m";
+    case TAM_RENDER_STYLE_LINK:       return "\033[4;34m";
+    case TAM_RENDER_STYLE_LINK_URL:   return "\033[90m";
+    case TAM_RENDER_STYLE_LINK_CUR:   return "\033[1;7;36m";
+    case TAM_RENDER_STYLE_QUOTE:      return "\033[32m";
+    case TAM_RENDER_STYLE_RULE:       return "\033[90m";
+    case TAM_RENDER_STYLE_TABLE_HDR:  return "\033[1;36m";
+    case TAM_RENDER_STYLE_NODE:       return "\033[1;36m";
+    case TAM_RENDER_STYLE_EDGE:       return "\033[33m";
     default:                    return "";
     }
 }
 
-static unsigned char lookup_rendered_style(const struct view_styles *st,
+static unsigned char lookup_rendered_style(const struct tam_render_styles *st,
                                            off_t byte_off)
 {
     if (!st || st->count == 0)
-        return VIEW_STYLE_NONE;
+        return TAM_RENDER_STYLE_NONE;
     /* Binary search for last span with start <= byte_off < end */
     for (size_t i = 0; i < st->count; i++) {
         if (st->spans[i].start <= byte_off && byte_off < st->spans[i].end)
@@ -1331,7 +1331,7 @@ static unsigned char lookup_rendered_style(const struct view_styles *st,
         if (st->spans[i].start > byte_off)
             break;
     }
-    return VIEW_STYLE_NONE;
+    return TAM_RENDER_STYLE_NONE;
 }
 
 static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
@@ -1341,7 +1341,7 @@ static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
     knox_viewer_doc_t *doc = &p->doc;
     knox_viewer_build_sbs(doc);
 
-    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+    const struct tam_render_box *bx = tam_render_box_chars(app->opts.ascii);
     int left_w = (p->w - 1) / 2;
     if (left_w < 10)
         left_w = 10;
@@ -1523,7 +1523,7 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
             row_str = tam_str_cat(row_str, " ");
 
             if (app->opts.color && !is_cursor) {
-                unsigned char cur_st = VIEW_STYLE_NONE;
+                unsigned char cur_st = TAM_RENDER_STYLE_NONE;
                 for (size_t b = 0; b < len; b++) {
                     unsigned char st = lookup_rendered_style(
                         &doc->rendered_buf.styles, (off_t)(off + b));
@@ -1534,7 +1534,7 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
                     }
                     row_str = tam_str_cat_len(row_str, base + off + b, 1);
                 }
-                if (cur_st != VIEW_STYLE_NONE)
+                if (cur_st != TAM_RENDER_STYLE_NONE)
                     row_str = tam_str_cat(row_str, "\033[0m");
             } else {
                 row_str = tam_str_cat_len(row_str, base + off, len);
@@ -1605,7 +1605,7 @@ static void render_split_tree(knox_app_t *app, knox_split_node_t *node,
 {
     if (!node)
         return;
-    const struct box_chars *bx = render_box_chars(app->opts.ascii);
+    const struct tam_render_box *bx = tam_render_box_chars(app->opts.ascii);
 
     if (node->type == KNOX_NODE_LEAF) {
         knox_pane_t *p = node->pane;
@@ -1993,7 +1993,7 @@ static void app_draw(knox_app_t *app)
 
     if (app->sidebar_visible) {
         render_sidebar(app, &frame, 1, body_y, app->sidebar_width, body_h);
-        const struct box_chars *bx = render_box_chars(app->opts.ascii);
+        const struct tam_render_box *bx = tam_render_box_chars(app->opts.ascii);
         int sep_x = app->sidebar_width + 1;
         for (int r = 0; r < body_h; r++) {
             frame_move_write(&frame, body_y + r, sep_x, bx->v, 1,

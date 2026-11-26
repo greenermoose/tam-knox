@@ -1,0 +1,38 @@
+W7 LIBTAM-RENDER (TAM-KNOX 1.0.8)
+
+Date: 2026-11-26
+AI harness: Claude Code 2.1.332
+AI model: claude-opus-5-5
+Continues: W6
+
+
+GUIDANCE
+
+  Fred: "Do 0.13.0" (libtam's plan P1: move tam-view's renderer into
+  libtam-render.a and delete the copies).
+
+
+DONE
+
+  - Removed the copied renderer (include/view.h,
+    include/render_internal.h, src/source.c, src/layout.c, src/render*.c;
+    about 4,400 lines). viewer.c and workbench.c use tam_render.h:
+    tam_render_buf, tam_render_markdown/html/mermaid, tam_render_box_chars
+    and the TAM_RENDER_FORMAT_ and TAM_RENDER_STYLE_ names.
+  - The library holds tam-view's newer copy, so tam-knox now renders with
+    the fixes tam-view made after 3119315.
+  - The Makefile links libtam-render.a before libtam.a and requires libtam
+    0.13.0. UPSTREAM.md and COPYRIGHT no longer list taken code.
+  - make test and make sanitize pass.
+
+
+FAILED
+
+  - Nothing.
+
+
+HANDOFF
+
+  - Still open from libtam review R2: bracketed paste (now delivered as
+    paste events that tam-knox ignores), the not-a-terminal check,
+    SIGTERM restore and Alt+Shift bindings. libtam 0.12.0 has the pieces.

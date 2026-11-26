@@ -6,11 +6,13 @@ VERSION := $(shell cat VERSION)
 
 ifneq ($(wildcard $(LIBTAM_PREFIX)/include/tam.h),)
 LIBTAM_INC ?= $(LIBTAM_PREFIX)/include
-LIBTAM ?= $(LIBTAM_PREFIX)/lib/libtam.a
+LIBTAM ?= $(LIBTAM_PREFIX)/lib/libtam-render.a $(LIBTAM_PREFIX)/lib/libtam.a
 else
 LIBTAM_INC ?= ../libtam/include
-LIBTAM ?= ../libtam/build/libtam.a
+LIBTAM ?= ../libtam/build/libtam-render.a ../libtam/build/libtam.a
 endif
+# The document source, layout and Markdown/HTML/Mermaid renderers are
+# libtam-render (libtam 0.13.0), linked before libtam.
 
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
             -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
@@ -19,13 +21,13 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
 CFLAGS ?= -O2 -g
 override CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wvla
 
-CORE_OBJECTS = $(addprefix $(BUILD)/,git.o graph.o explorer.o keymap.o syntax.o viewer.o pane.o workbench.o source.o layout.o render.o render_md.o render_html.o render_mermaid.o)
+CORE_OBJECTS = $(addprefix $(BUILD)/,git.o graph.o explorer.o keymap.o syntax.o viewer.o pane.o workbench.o)
 OBJECTS = $(BUILD)/main.o $(CORE_OBJECTS)
 
 all: $(BUILD)/tam-knox
 
 libtam-check:
-	@printf '#include <tam.h>\n#if TAM_VERSION_MAJOR == 0 && TAM_VERSION_MINOR < 10\n#error libtam 0.10.0 or later required\n#endif\n#include <tam_pager.h>\n' | $(CC) $(CPPFLAGS) -x c -fsyntax-only - || { echo 'tam-knox requires libtam 0.10.0 or later' >&2; exit 1; }
+	@printf '#include <tam.h>\n#if TAM_VERSION_MAJOR == 0 && TAM_VERSION_MINOR < 13\n#error libtam 0.13.0 or later required\n#endif\n#include <tam_render.h>\n' | $(CC) $(CPPFLAGS) -x c -fsyntax-only - || { echo 'tam-knox requires libtam 0.13.0 or later, with libtam-render' >&2; exit 1; }
 
 $(OBJECTS): | libtam-check
 

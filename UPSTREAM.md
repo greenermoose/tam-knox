@@ -3,20 +3,10 @@
 This file lists every piece of code tam-knox takes from another project.
 An idea taken without its code goes in `ideas/`, not here.
 
-## tam-view layout and Markdown/HTML/Mermaid rendering engine
-
-- **Project:** tam-view (https://github.com/greenermoose/tam-view)
-- **License:** GNU General Public License, version 3 or later
-- **Source:** `include/view.h`, `include/render_internal.h`,
-  `src/source.c`, `src/layout.c`, `src/render.c`, `src/render_md.c`,
-  `src/render_html.c`, and `src/render_mermaid.c` at commit `3119315`
-- **Here:** `include/view.h`, `include/render_internal.h`,
-  `src/source.c`, `src/layout.c`, `src/render.c`, `src/render_md.c`,
-  `src/render_html.c`, and `src/render_mermaid.c`
-- **Changes:** Used unmodified as the document source, UTF-8 line layout,
-  and Markdown/HTML/Mermaid rendering backend for the `tam-knox` file
-  viewer.
-- **Taken:** 2026-11-25
+Nothing taken now. Until 1.0.8, tam-knox carried an unmodified copy of
+tam-view's document source, layout and Markdown/HTML/Mermaid renderers
+(taken at tam-view `3119315` on 2026-11-25). That code moved into libtam's
+`libtam-render.a` in libtam 0.13.0, and tam-knox links it instead.
 
 ## How to record a piece
 

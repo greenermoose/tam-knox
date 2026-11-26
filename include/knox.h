@@ -1,8 +1,8 @@
 #ifndef KNOX_H
 #define KNOX_H
 
-#include "view.h"
-#include "render_internal.h"
+#include <tam_render.h>
+#include <tam_render.h>
 
 #include <tam.h>
 #include <tam_key.h>
@@ -17,7 +17,7 @@
 #include <time.h>
 
 #ifndef KNOX_VERSION
-#define KNOX_VERSION "1.0.7"
+#define KNOX_VERSION "1.0.8"
 #endif
 
 /* ========================================================================= */
@@ -464,11 +464,11 @@ typedef struct {
     uint8_t           *line_states;   /* knox_lex_state_t entering each line */
     size_t             line_count;
     knox_lang_t        lang;
-    enum view_format   markup_fmt;    /* VIEW_FORMAT_MARKDOWN / HTML / MERMAID */
+    enum tam_render_format   markup_fmt;    /* TAM_RENDER_FORMAT_MARKDOWN / HTML / MERMAID */
     bool               render_mode;   /* True = rendered MD/HTML/Mermaid */
     int                rendered_width;
     bool               rendered_ascii;
-    struct rbuf        rendered_buf;
+    struct tam_render_buf        rendered_buf;
     size_t            *rend_offsets;
     size_t            *rend_lengths;
     size_t             rend_line_count;

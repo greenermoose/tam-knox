@@ -14,10 +14,6 @@ FOR A PARTICULAR PURPOSE.
 
 CODE TAKEN FROM OTHER PROJECTS
 
-tam-view (https://github.com/greenermoose/tam-view)
-  Copyright (C) 2026 Fred Horch.
-  License: GNU General Public License, version 3 or later (see LICENSE).
-  Covers the source buffer, text layout, and Markdown/HTML/Mermaid
-  rendering modules in include/view.h, include/render_internal.h,
-  src/source.c, src/layout.c, src/render.c, src/render_md.c,
-  src/render_html.c, and src/render_mermaid.c. See UPSTREAM.md.
+None. The source buffer, text layout and Markdown/HTML/Mermaid renderers
+that tam-knox once copied from tam-view now come from libtam-render, which
+it links (libtam 0.13.0 or later).
