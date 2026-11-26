@@ -19,7 +19,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
             -Iinclude -I$(LIBTAM_INC) \
             -DKNOX_VERSION='"$(VERSION)"'
 CFLAGS ?= -O2 -g
-override CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wvla
+override CFLAGS += -std=c17 -Wall -Wextra -Wpedantic -Wshadow -Wvla
 
 CORE_OBJECTS = $(addprefix $(BUILD)/,git.o graph.o explorer.o keymap.o syntax.o viewer.o pane.o workbench.o)
 OBJECTS = $(BUILD)/main.o $(CORE_OBJECTS)

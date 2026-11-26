@@ -1,7 +1,7 @@
 # tam-knox roadmap
 
 `tam-knox` is Tamlinux's terminal multi-repository Git workbench and file
-viewer, written in C11 on top of `libtam`.
+viewer, written in C17 on top of `libtam`.
 
 ## Milestones
 

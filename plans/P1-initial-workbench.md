@@ -1,7 +1,7 @@
 # P1: Initial Multi-Repository Workbench (0.1.0)
 
 - **Status:** Done (0.1.0, 2026-11-25)
-- **Goal:** Build `tam-knox` 0.1.0 in C11 on `libtam`, providing a
+- **Goal:** Build `tam-knox` 0.1.0 in C17 on `libtam`, providing a
   VS Code-style multi-repository Source Control and Explorer sidebar,
   Git Graph commit history and diff inspector, and dual-mode File Viewer
   (raw syntax coloring + rendered Markdown/HTML/Mermaid) with tabs and
@@ -22,7 +22,7 @@
    - Open the selected file in `tam-edit` (`Alt+E`).
    - Stage / unstage individual files and write commits directly inside
      `tam-knox` (scoped to staged paths).
-4. **Syntax Coloring Engine:** Built-in lightweight C11 tokenizer lexer
+4. **Syntax Coloring Engine:** Built-in lightweight C17 tokenizer lexer
    for common languages (C, Shell, Python, JS/TS/QML, JSON, YAML, TOML,
    INI, Makefile, Markdown, HTML, Rust, Go, Diff) plus `tam-view`'s
    Markdown/HTML/Mermaid renderer.
@@ -39,11 +39,11 @@
   (`src/git.c`).
 - Path-scoped stage/unstage, commit prompt, and remote sync with
   `main`/`test` confirmation (`src/git.c`, `src/workbench.c`).
-- C11 port of `mhutchie.git-graph`'s `Vertex`/`Branch`/`determinePath`
+- C17 port of `mhutchie.git-graph`'s `Vertex`/`Branch`/`determinePath`
   layout algorithm and Unicode/ASCII terminal rasterizer (`src/graph.c`).
 - Hierarchical folder Explorer with live Git status badges
   (`src/explorer.c`).
-- C11 syntax highlighter (`src/syntax.c`) and `tam-view` Markdown, HTML,
+- C17 syntax highlighter (`src/syntax.c`) and `tam-view` Markdown, HTML,
   and Mermaid viewer integration (`src/viewer.c`).
 - Tab bar, recursive horizontal/vertical split-pane tree (`src/pane.c`),
   command palette & chord composer (`Ctrl+E`), and guidance overlay

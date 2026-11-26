@@ -365,7 +365,7 @@ int  knox_explorer_reveal_path(knox_explorer_t *ex, const char *target_abs_path,
                                size_t *out_flat_idx);
 
 /* ========================================================================= */
-/* 4. Zero-Dependency C11 Syntax Lexer (src/syntax.c)                        */
+/* 4. Zero-Dependency C17 Syntax Lexer (src/syntax.c)                        */
 /* ========================================================================= */
 
 typedef enum {

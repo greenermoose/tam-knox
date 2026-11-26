@@ -32,7 +32,7 @@ int engine_start(uint32_t flags)
 }
 EOF
 git -C "$DEMO/core-engine" add -- engine.c
-git -C "$DEMO/core-engine" commit -q -m "Add initial C11 engine_start implementation"
+git -C "$DEMO/core-engine" commit -q -m "Add initial C17 engine_start implementation"
 
 git -C "$DEMO/core-engine" checkout -q -b feature/fast-path
 cat >> "$DEMO/core-engine/engine.c" << 'EOF'
@@ -49,7 +49,7 @@ git -C "$DEMO/core-engine" checkout -q dev
 cat > "$DEMO/core-engine/README.md" << 'EOF'
 # Core Engine
 
-High-speed C11 engine for Tamlinux.
+High-speed C17 engine for Tamlinux.
 
 ```mermaid
 flowchart LR

@@ -5,7 +5,7 @@
 #include <string.h>
 
 /*
- * Direct C11 port of mhutchie.git-graph (v1.30.0, media/out.min.js)
+ * Direct C17 port of mhutchie.git-graph (v1.30.0, media/out.min.js)
  * Vertex (`Pe`), Branch (`De`), and Graph (`Me`: `loadCommits`,
  * `determinePath`, `getAvailableColour`) plus a 2-column-per-lane
  * terminal cell matrix rasterizer.

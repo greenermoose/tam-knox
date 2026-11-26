@@ -13,7 +13,7 @@ Follows the tam-idol 1.1.0 standard.
 
 BUILD AND TRY
 
-  Needs a C11 compiler, Make, and libtam 0.9.1 or later.
+  Needs a C17 compiler, Make, and libtam 0.9.1 or later.
   LIBTAM_PREFIX defaults to $HOME/.local. The binary links libc and
   the static libtam archive.
 
