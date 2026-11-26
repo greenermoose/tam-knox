@@ -3290,12 +3290,22 @@ int knox_run_workbench(const char *workspace_dir, knox_options_t opts)
             continue;
         }
 
-        tam_key_feed(&app.keys, inbuf, (size_t)n);
-        tam_key_event_t ev;
+        /* The key parser holds less than one read, so feed what it takes,
+         * handle those keys, and feed the rest. */
+        const unsigned char *rest = inbuf;
+        size_t left = (size_t)n;
         bool handled = false;
-        while (tam_key_next(&app.keys, &ev) == 1) {
-            handle_key_event(&app, &ev);
-            handled = true;
+        while (left > 0 && app.running) {
+            int took = tam_key_feed(&app.keys, rest, left);
+            if (took < 0)
+                break;
+            rest += took;
+            left -= (size_t)took;
+            tam_key_event_t ev;
+            while (app.running && tam_key_next(&app.keys, &ev) == 1) {
+                handle_key_event(&app, &ev);
+                handled = true;
+            }
         }
         if (handled)
             app_draw(&app);

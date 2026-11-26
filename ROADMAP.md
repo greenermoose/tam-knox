@@ -20,3 +20,4 @@ viewer, written in C11 on top of `libtam`.
 | **1.0.4** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Align the top bar tab strip and vertical divider with the main workbench pane when the sidebar is visible | Done (2026-11-25) |
 | **1.0.5** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Add an empty black-space border (1 row top/bottom, 2 columns left/right) around all centered modals (Keybinding Guidance, Command Palette, Branches, Stashes) for readability | Done (2026-11-25) |
 | **1.0.6** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Move keybinding documentation to `keys/keybindings.md` and switch `tab-prev`/`tab-next` from `Alt+,`/`Alt+.` to `Alt+[`/`Alt+]` per `tam-idol/keys/keybindings.md` | Done (2026-11-25) |
+| **1.0.7** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Build against libtam 0.10.0; keep every key of a large read (paste or burst) instead of dropping reads over 64 bytes | Done (2026-11-26) |

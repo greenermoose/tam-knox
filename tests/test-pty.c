@@ -105,7 +105,7 @@ static void test_pty_repo_sync(const char *bin)
     run_git((const char *[]){"git", "-C", repo_ahead, "config", "user.email", "fred@example.com", NULL});
 
     char *file_a = tam_path_join(repo_ahead, "file.txt");
-    assert(tam_fs_write_atomic(file_a, "v1\n", 3, 0644));
+    assert(tam_fs_write_atomic(file_a, "v1\n", 3, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_ahead, "add", "--", "file.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "commit", "-m", "v1", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "remote", "add", "origin", remote_dir, NULL});
@@ -116,14 +116,14 @@ static void test_pty_repo_sync(const char *bin)
     run_git((const char *[]){"git", "-C", repo_behind, "config", "user.name", "Fred", NULL});
     run_git((const char *[]){"git", "-C", repo_behind, "config", "user.email", "fred@example.com", NULL});
 
-    assert(tam_fs_write_atomic(file_a, "v2\n", 3, 0644));
+    assert(tam_fs_write_atomic(file_a, "v2\n", 3, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_ahead, "add", "--", "file.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "commit", "-m", "v2", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "push", NULL});
     run_git((const char *[]){"git", "-C", repo_behind, "fetch", "--prune", NULL});
 
     /* 3. Make local commit v3 in repo-ahead (ahead 1) while repo-behind is behind 1 */
-    assert(tam_fs_write_atomic(file_a, "v3\n", 3, 0644));
+    assert(tam_fs_write_atomic(file_a, "v3\n", 3, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_ahead, "add", "--", "file.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "commit", "-m", "v3", NULL});
 
@@ -198,7 +198,7 @@ static void test_pty_repo_sync(const char *bin)
 
     /* 6. Push v4 from repo-ahead directly to remote, then press 'f' on selected
      *    repo-behind in tam-knox -> fetches without pulling and shows ↓1 badge */
-    assert(tam_fs_write_atomic(file_a, "v4\n", 3, 0644));
+    assert(tam_fs_write_atomic(file_a, "v4\n", 3, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_ahead, "add", "--", "file.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "commit", "-m", "v4", NULL});
     run_git((const char *[]){"git", "-C", repo_ahead, "push", NULL});
@@ -251,7 +251,7 @@ static void test_pty_explore_repo(const char *bin)
     run_git((const char *[]){"git", "-C", repo_a, "config", "user.name", "Fred", NULL});
     run_git((const char *[]){"git", "-C", repo_a, "config", "user.email", "fred@example.com", NULL});
     char *fa = tam_path_join(repo_a, "alpha_only.txt");
-    assert(tam_fs_write_atomic(fa, "alpha\n", 6, 0644));
+    assert(tam_fs_write_atomic(fa, "alpha\n", 6, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_a, "add", "--", "alpha_only.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_a, "commit", "-m", "alpha", NULL});
 
@@ -260,8 +260,8 @@ static void test_pty_explore_repo(const char *bin)
     run_git((const char *[]){"git", "-C", repo_b, "config", "user.email", "fred@example.com", NULL});
     char *fb = tam_path_join(repo_b, "beta_only.txt");
     char *fn = tam_path_join(sub_dir, "nested.txt");
-    assert(tam_fs_write_atomic(fb, "beta\n", 5, 0644));
-    assert(tam_fs_write_atomic(fn, "nested contents\n", 16, 0644));
+    assert(tam_fs_write_atomic(fb, "beta\n", 5, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(fn, "nested contents\n", 16, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo_b, "add", "--", "beta_only.txt", "sub/nested.txt", NULL});
     run_git((const char *[]){"git", "-C", repo_b, "commit", "-m", "beta", NULL});
 
@@ -364,10 +364,10 @@ static void test_pty_tab_number_select(const char *bin)
     run_git((const char *[]){"git", "-C", repo, "config", "user.email", "fred@example.com", NULL});
 
     char *f = tam_path_join(repo, "notes.txt");
-    assert(tam_fs_write_atomic(f, "line1\n", 6, 0644));
+    assert(tam_fs_write_atomic(f, "line1\n", 6, 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo, "add", "--", "notes.txt", NULL});
     run_git((const char *[]){"git", "-C", repo, "commit", "-m", "init notes", NULL});
-    assert(tam_fs_write_atomic(f, "line1\nline2\n", 12, 0644));
+    assert(tam_fs_write_atomic(f, "line1\nline2\n", 12, 0, 0644) == 0);
 
     int mfd = posix_openpt(O_RDWR | O_NOCTTY);
     assert(mfd >= 0);
@@ -491,18 +491,18 @@ int main(int argc, char **argv)
 
     char *md_file = tam_path_join(repo1, "README.md");
     const char *md_content = "# Demo Repo\n\nWelcome to **tam-knox**.\n";
-    assert(tam_fs_write_atomic(md_file, md_content, strlen(md_content), 0644));
+    assert(tam_fs_write_atomic(md_file, md_content, strlen(md_content), 0, 0644) == 0);
     run_git((const char *[]){"git", "-C", repo1, "add", "--", "README.md", NULL});
     run_git((const char *[]){"git", "-C", repo1, "commit", "-m", "Initial README", NULL});
 
     /* Dirty the repo so Changes list has an entry */
     const char *md_dirty = "# Demo Repo\n\nWelcome to **tam-knox** v0.1.0.\n";
-    assert(tam_fs_write_atomic(md_file, md_dirty, strlen(md_dirty), 0644));
+    assert(tam_fs_write_atomic(md_file, md_dirty, strlen(md_dirty), 0, 0644) == 0);
 
     /* Write a temporary keymap.ini to verify user keybinding overrides via TAM_KNOX_KEYMAP */
     char *km_file = tam_path_join(ws_dir, "keymap.ini");
     const char *km_ini = "[keymap]\nF5 = guidance\nF6 = fetch-all\n";
-    assert(tam_fs_write_atomic(km_file, km_ini, strlen(km_ini), 0644));
+    assert(tam_fs_write_atomic(km_file, km_ini, strlen(km_ini), 0, 0644) == 0);
 
     int mfd = posix_openpt(O_RDWR | O_NOCTTY);
     assert(mfd >= 0);

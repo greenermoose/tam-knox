@@ -403,7 +403,7 @@ int knox_viewer_open_file(knox_viewer_doc_t *doc, const char *abs_path,
     if (!doc || !abs_path)
         return -1;
     size_t flen = 0;
-    char *raw = tam_fs_read_file(abs_path, &flen);
+    char *raw = tam_fs_read(abs_path, 0, &flen);
     if (!raw)
         return -1;
 

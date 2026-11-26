@@ -43,10 +43,10 @@ static void test_explorer_filter(void)
     char *f2 = tam_path_join(src_dir, "keymap.c");
     char *f3 = tam_path_join(docs_dir, "guide.md");
     char *f4 = tam_path_join(build_dir, "keymap.o");
-    assert(tam_fs_write_atomic(f1, "int main(void){return 0;}\n", 26, 0644));
-    assert(tam_fs_write_atomic(f2, "/* keymap */\n", 13, 0644));
-    assert(tam_fs_write_atomic(f3, "# Guide\n", 8, 0644));
-    assert(tam_fs_write_atomic(f4, "obj\n", 4, 0644));
+    assert(tam_fs_write_atomic(f1, "int main(void){return 0;}\n", 26, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(f2, "/* keymap */\n", 13, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(f3, "# Guide\n", 8, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(f4, "obj\n", 4, 0, 0644) == 0);
 
     knox_explorer_t ex;
     assert(knox_explorer_init(&ex, root, false) == 0);
@@ -99,8 +99,8 @@ static void test_explorer_reveal(void)
 
     char *fa = tam_path_join(repo_a, "alpha.txt");
     char *fb = tam_path_join(repo_b, "beta.txt");
-    assert(tam_fs_write_atomic(fa, "a\n", 2, 0644));
-    assert(tam_fs_write_atomic(fb, "b\n", 2, 0644));
+    assert(tam_fs_write_atomic(fa, "a\n", 2, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(fb, "b\n", 2, 0, 0644) == 0);
 
     knox_explorer_t ex;
     assert(knox_explorer_init(&ex, root, false) == 0);
@@ -173,7 +173,7 @@ static void test_batch_fetch(void)
     run_cmd((const char *[]){"git", "-C", repo_a, "config", "user.email", "t@e.com", NULL});
 
     char *fa = tam_path_join(repo_a, "a.txt");
-    assert(tam_fs_write_atomic(fa, "v1\n", 3, 0644));
+    assert(tam_fs_write_atomic(fa, "v1\n", 3, 0, 0644) == 0);
     run_cmd((const char *[]){"git", "-C", repo_a, "add", "--", "a.txt", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "commit", "-m", "init", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "remote", "add", "origin", remote_dir, NULL});
@@ -182,7 +182,7 @@ static void test_batch_fetch(void)
     run_cmd((const char *[]){"git", "clone", remote_dir, repo_b, NULL});
 
     /* Push a second commit from repo-a so repo-b falls behind */
-    assert(tam_fs_write_atomic(fa, "v2\n", 3, 0644));
+    assert(tam_fs_write_atomic(fa, "v2\n", 3, 0, 0644) == 0);
     run_cmd((const char *[]){"git", "-C", repo_a, "add", "--", "a.txt", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "commit", "-m", "v2", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "push", NULL});
@@ -192,7 +192,7 @@ static void test_batch_fetch(void)
     run_cmd((const char *[]){"git", "-C", repo_local, "config", "user.name", "Test", NULL});
     run_cmd((const char *[]){"git", "-C", repo_local, "config", "user.email", "t@e.com", NULL});
     char *fl = tam_path_join(repo_local, "local.txt");
-    assert(tam_fs_write_atomic(fl, "only local\n", 11, 0644));
+    assert(tam_fs_write_atomic(fl, "only local\n", 11, 0, 0644) == 0);
     run_cmd((const char *[]){"git", "-C", repo_local, "add", "--", "local.txt", NULL});
     run_cmd((const char *[]){"git", "-C", repo_local, "commit", "-m", "local init", NULL});
 

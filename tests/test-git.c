@@ -50,7 +50,7 @@ int main(void)
 
     char *readme_a = tam_path_join(repo_a, "README.md");
     const char *init_md = "# Repo Alpha\n\nInitial text.\n";
-    assert(tam_fs_write_atomic(readme_a, init_md, strlen(init_md), 0644));
+    assert(tam_fs_write_atomic(readme_a, init_md, strlen(init_md), 0, 0644) == 0);
     run_cmd((const char *[]){"git", "-C", repo_a, "add", "--", "README.md", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "commit", "-m", "Initial commit", NULL});
     run_cmd((const char *[]){"git", "-C", repo_a, "remote", "add", "origin", remote_dir, NULL});
@@ -63,9 +63,9 @@ int main(void)
 
     /* Modify repo-alpha: 1 modified file, 1 untracked file */
     const char *mod_md = "# Repo Alpha\n\nModified line.\n";
-    assert(tam_fs_write_atomic(readme_a, mod_md, strlen(mod_md), 0644));
+    assert(tam_fs_write_atomic(readme_a, mod_md, strlen(mod_md), 0, 0644) == 0);
     char *notes_a = tam_path_join(repo_a, "notes.txt");
-    assert(tam_fs_write_atomic(notes_a, "hello\n", 6, 0644));
+    assert(tam_fs_write_atomic(notes_a, "hello\n", 6, 0, 0644) == 0);
 
     /* 3. Discover workspace repos */
     knox_workspace_t ws;
@@ -116,7 +116,7 @@ int main(void)
     run_cmd((const char *[]){"git", "-C", repo_b, "checkout", "-b", "main", NULL});
     run_cmd((const char *[]){"git", "-C", repo_b, "push", "-u", "origin", "main", NULL});
     char *main_file = tam_path_join(repo_b, "main.txt");
-    assert(tam_fs_write_atomic(main_file, "main update\n", 12, 0644));
+    assert(tam_fs_write_atomic(main_file, "main update\n", 12, 0, 0644) == 0);
     run_cmd((const char *[]){"git", "-C", repo_b, "add", "--", "main.txt", NULL});
     run_cmd((const char *[]){"git", "-C", repo_b, "commit", "-m", "Main commit", NULL});
     assert(knox_repo_refresh_status(rb) == 0);

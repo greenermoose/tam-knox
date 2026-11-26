@@ -49,7 +49,7 @@ static void test_viewer_markdown_and_html_render(void)
         "| Col A | Col B |\n"
         "| --- | --- |\n"
         "| val 1 | val 2 |\n";
-    assert(tam_fs_write_atomic(tmp_md, md, strlen(md), 0644));
+    assert(tam_fs_write_atomic(tmp_md, md, strlen(md), 0, 0644) == 0);
 
     knox_viewer_doc_t doc = {0};
     assert(knox_viewer_open_file(&doc, tmp_md, "test-repo", true, 72, false) == 0);

@@ -721,7 +721,7 @@ char *knox_repo_diff_working_file(const knox_repo_t *repo,
     if (chg->worktree_status == KNOX_CHANGE_UNTRACKED) {
         char *abs_file = tam_path_join(repo->root_path, chg->path);
         size_t flen = 0;
-        char *raw = abs_file ? tam_fs_read_file(abs_file, &flen) : NULL;
+        char *raw = abs_file ? tam_fs_read(abs_file, 0, &flen) : NULL;
         free(abs_file);
         if (!raw)
             return xstrdup("(Untracked binary or unreadable file)\n");
@@ -820,7 +820,7 @@ char *knox_repo_show_commit_file(const knox_repo_t *repo,
     if (strcmp(commit_hash, KNOX_UNCOMMITTED_HASH) == 0) {
         char *abs_file = tam_path_join(repo->root_path, rel_path);
         size_t len = 0;
-        char *txt = abs_file ? tam_fs_read_file(abs_file, &len) : NULL;
+        char *txt = abs_file ? tam_fs_read(abs_file, 0, &len) : NULL;
         free(abs_file);
         return txt;
     }

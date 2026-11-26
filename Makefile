@@ -25,7 +25,7 @@ OBJECTS = $(BUILD)/main.o $(CORE_OBJECTS)
 all: $(BUILD)/tam-knox
 
 libtam-check:
-	@printf '#include <tam.h>\n#if TAM_VERSION_MAJOR == 0 && (TAM_VERSION_MINOR < 9 || (TAM_VERSION_MINOR == 9 && TAM_VERSION_PATCH < 1))\n#error libtam 0.9.1 or later required\n#endif\n#include <tam_pager.h>\n' | $(CC) $(CPPFLAGS) -x c -fsyntax-only - || { echo 'tam-knox requires libtam 0.9.1 or later' >&2; exit 1; }
+	@printf '#include <tam.h>\n#if TAM_VERSION_MAJOR == 0 && TAM_VERSION_MINOR < 10\n#error libtam 0.10.0 or later required\n#endif\n#include <tam_pager.h>\n' | $(CC) $(CPPFLAGS) -x c -fsyntax-only - || { echo 'tam-knox requires libtam 0.10.0 or later' >&2; exit 1; }
 
 $(OBJECTS): | libtam-check
 
