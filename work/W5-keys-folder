@@ -1,0 +1,32 @@
+W5 MOVE KEYBINDING DOCS TO KEYS/ AND SWITCH TAB KEYS
+
+Date: 2026-11-25
+AI harness: agy 1.5.17
+AI model: Gemini 4 Hydrogen (Medium)
+Commits: the commit that adds this record
+
+GUIDANCE
+
+  Fred: "Move all keybinding docs from arch/ folders to keys/ folders for
+  tam repos. See tam-clif for an example. Make sure all keybindings abide
+  by the tam-idol/keys/keybindings.md standard."
+  And on tab switching: switch tab-prev / tab-next from Alt+, / Alt+. to
+  Alt+[ / Alt+].
+
+DONE
+
+  - Moved arch/keys.md to keys/keybindings.md, added keys/README-keys,
+    and updated references in README, arch/README-arch,
+    plans/P3-filter-batch-fetch-and-keymap.md, src/workbench.c, and
+    work/WHATNOW to tam-idol/keys/keybindings.md.
+  - Switched tab-prev / tab-next from Alt+, / Alt+. to Alt+[ / Alt+] in
+    src/workbench.c, keys/keybindings.md, and README.
+  - Bumped VERSION and KNOX_VERSION to 1.0.6 and updated ROADMAP.md.
+
+FAILED
+
+  - Nothing.
+
+HANDOFF
+
+  - Continue with NEXT in work/WHATNOW.

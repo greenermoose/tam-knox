@@ -61,7 +61,7 @@ KEYS
   Alt+E                Open current file in tam-edit ($VISUAL / $EDITOR)
   Alt+V, Alt+H         Split active main pane vertically or horizontally
   Alt+W                Cycle focus among split panes in active tab
-  Alt+, / Alt+.        Switch to previous or next workbench tab
+  Alt+[ / Alt+]        Switch to previous or next workbench tab
   1-9, 0               Focus and select workbench tabs 1-10 in keyboard order
   R, Alt+R             Toggle Rendered vs. Raw syntax-colored file view
   B, Alt+F             Cycle branch filter in Git Graph (All / HEAD)
@@ -82,7 +82,8 @@ WHERE THINGS ARE
   src/, include/   workbench TUI, Git engine, graph layout, explorer,
                    syntax highlighter, and Markdown/HTML/Mermaid viewer
   tests/           graph layout, Git operations, syntax, PTY, and CLI tests
-  arch/            how the workbench, graph algorithm, and keys work
+  arch/            how the workbench and graph algorithm work
+  keys/            keybinding specification (tam-idol standard)
   ideas/           surveys of VS Code, Git Graph, Emacs Magit, Lazygit,
                    Tig, and GitUI
   plans/           milestone plans

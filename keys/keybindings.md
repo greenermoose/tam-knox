@@ -1,7 +1,8 @@
 # tam-knox Key Bindings
 
-`tam-knox` follows the Tamlinux-wide keybinding standard in
-`tamlinux/arch/keybindings.md`. Every `Ctrl` chord retains its single
+`tam-knox` follows the
+[Tamlinux keybinding standard](https://github.com/greenermoose/tam-idol/blob/dev/keys/keybindings.md)
+(`tam-idol/keys/keybindings.md`). Every `Ctrl` chord retains its single
 universal Tamlinux meaning, no binding uses `Meta` (reserved for
 `tam-pane`), and no binding uses `Alt+Left/Right` or `Alt+F1..F12`
 (captured by the Linux kernel VT driver on `TERM=linux`).
@@ -49,7 +50,7 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `Alt+V` | `Alt+V` | `split-vertical` | Split active main pane side-by-side (left / right) |
 | `Alt+H` | `Alt+H` | `split-horizontal` | Split active main pane stacked (top / bottom) |
 | `Alt+W` | `Alt+W` | `focus-other-pane` | Cycle focus among split panes inside the active tab |
-| `Alt+,` / `Alt+.` | `Alt+,` / `Alt+.` | `tab-prev` / `tab-next` | Switch to previous / next tab in the main workbench |
+| `Alt+[` / `Alt+]` | `Alt+[` / `Alt+]` | `tab-prev` / `tab-next` | Switch to previous / next tab in the main workbench |
 | `1`–`9`, `0` | `1`–`9`, `0` | `tab-1`..`tab-9`, `tab-0` | Focus and select workbench tab 1–10 in keyboard row order (`0` selects the 10th tab) |
 | `f` | `f` | `repo-fetch` | Non-destructive `git fetch --prune` for the focused repository |
 | `s`, `Alt+S` | `s`, `Alt+S` | `repo-sync` | Sync focused repository with remote (`fetch`, `pull --ff-only`, `push`; confirms on `main`/`test`) |

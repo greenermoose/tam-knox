@@ -33,7 +33,7 @@
   - Supports `[keymap]` (plus `[bindings]`, `[keys]`, or top-level) entries of
     the form `KeySpec = widget-name` or `unbind` / `none`, using physical key
     names (`Ctrl+`, `Alt+`, `Shift+`, `F1`–`F12`, named nav keys, printable chars).
-  - Rejects `Meta+` chords per `tamlinux/arch/keybindings.md`, warns on invalid
+  - Rejects `Meta+` chords per `tam-idol/keys/keybindings.md`, warns on invalid
     keys or unknown widget names without aborting startup, and reflects custom
     bindings (`Key*`) in the Guidance overlay (`g` / `Ctrl+G`) and Command
     Palette (`Ctrl+E`).

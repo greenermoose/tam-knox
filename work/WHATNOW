@@ -3,13 +3,13 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-25, with W4
+Updated: 2026-11-25, with W5
 
 STATE
 
-  Version 1.0.5 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
-  P3 (0.3.0-1.0.5) are complete and pass make test, make sanitize, and
-  idol-check (W1, W2, W3, W4).
+  Version 1.0.6 on branch dev. Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
+  P3 (0.3.0-1.0.6) are complete and pass make test, make sanitize, and
+  idol-check (W1, W2, W3, W4, W5).
 
   Features working in 1.0.5:
   - Multi-repository Source Control sidebar (repository discovery,
@@ -49,5 +49,5 @@ WATCH OUT
   - Never invoke git commit -a or git add -A: tam-knox commits only the
     explicitly staged file paths in the active repository.
   - Pushing main or test always requires explicit user confirmation.
-  - Follow tamlinux/arch/keybindings.md: no Meta bindings, no Alt+Left/
+  - Follow tam-idol/keys/keybindings.md: no Meta bindings, no Alt+Left/
     Right or Alt+F1..F12, and no double-acting Ctrl codes.

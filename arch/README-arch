@@ -33,4 +33,3 @@ IN THIS REPOSITORY
                  execution on libtam
   git-graph.md   lane assignment, color recycling, and terminal cell
                  rasterization adapted from mhutchie.git-graph
-  keys.md        tam-knox key bindings following tamlinux/arch/keybindings.md

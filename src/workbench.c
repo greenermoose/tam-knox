@@ -71,8 +71,8 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "split-vertical",      "Alt+V",         "Split active main pane side-by-side (left / right)" },
     { "split-horizontal",    "Alt+H",         "Split active main pane stacked (top / bottom)" },
     { "focus-other-pane",    "Alt+W",         "Cycle focus among split panes in the active tab" },
-    { "tab-prev",            "Alt+,",         "Switch to previous workbench tab" },
-    { "tab-next",            "Alt+.",         "Switch to next workbench tab (1-0 selects)" },
+    { "tab-prev",            "Alt+[",         "Switch to previous workbench tab" },
+    { "tab-next",            "Alt+]",         "Switch to next workbench tab (1-0 selects)" },
     { "new",                 "Ctrl+N",        "Open a new workbench tab" },
     { "close",               "Ctrl+D",        "Close active split pane or workbench tab" },
     { "find",                "Ctrl+F / /",    "Find in repo list, Explorer tree, commit graph, or file" },
@@ -2989,7 +2989,7 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         return;
     }
 
-    /* 1. Universal Ctrl map (from tamlinux/arch/keybindings.md) */
+    /* 1. Universal Ctrl map (from tam-idol/keys/keybindings.md) */
     if (ev->type == TAM_KEY_CHAR && (ev->mods & TAM_MOD_CTRL)) {
         uint32_t c = tolower((unsigned char)ev->codepoint);
         switch (c) {
@@ -3027,8 +3027,8 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'w': app_execute_widget(app, "focus-other-pane"); return;
         case 'r': app_execute_widget(app, "toggle-render-mode"); return;
         case 'f': app_execute_widget(app, "cycle-branch-filter"); return;
-        case ',': app_execute_widget(app, "tab-prev"); return;
-        case '.': app_execute_widget(app, "tab-next"); return;
+        case '[': app_execute_widget(app, "tab-prev"); return;
+        case ']': app_execute_widget(app, "tab-next"); return;
         case '<': app_move_selection(app, -100000); return;
         case '>': app_move_selection(app, 100000); return;
         default:  return;
