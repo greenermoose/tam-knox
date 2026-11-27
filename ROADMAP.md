@@ -3,25 +3,56 @@
 `tam-knox` is Tamlinux's terminal multi-repository Git workbench and file
 viewer, written in C17 on top of `libtam`.
 
-## Milestones
+- **Current version:** `1.1.2` (branch `dev`)
+- **Progress:** All 3 phases done (in maintenance)
+- **Versioning:** Semantic versioning; minor adds features or capabilities,
+  patch fixes defects or refines UI and bindings.
 
-| Version | Phase | Milestone | Status |
-| --- | --- | --- | --- |
-| **0.1.0** | [P1](plans/P1-initial-workbench.md) | Multi-repo Source Control sidebar (discovery, branch, dirty status, changed files, ahead/behind, stage/unstage/commit, remote sync), Git Graph commit history & diff inspector, folder Explorer with Git badges, File Viewer (raw syntax coloring + rendered Markdown/HTML/Mermaid from `tam-view`), tabs, split panes, command palette, and field survey in `ideas/` | Done (2026-11-25) |
-| **0.1.1** | [P1](plans/P1-initial-workbench.md) | High-contrast 256-color selection, header, top-bar, and muted-text palette for `tam-last`, plus dynamic repository name column sizing in the sidebar | Done (2026-11-25) |
-| **0.1.2** | [P1](plans/P1-initial-workbench.md) | Add `g` single-key shortcut to toggle the keybinding guidance overlay alongside `Ctrl+G` | Done (2026-11-25) |
-| **0.2.0** | [P2](plans/P2-branch-stash-and-split-diff.md) | Branch checkout / creation modal, stash management, and side-by-side diff split mode | Done (2026-11-25) |
-| **0.3.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | File tree substring filtering, multi-repo batch fetch (`Alt+A` / `F`), and user `keymap.ini` customization via `libtam` `tam_ini` | Done (2026-11-25) |
-| **0.3.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `s` in normal mode to sync the selected repository with its remote | Done (2026-11-25) |
-| **1.0.0** | [P1](plans/P1-initial-workbench.md)–[P3](plans/P3-filter-batch-fetch-and-keymap.md) | Complete v1 multi-repository Git workbench, commit graph, explorer, and file/diff viewer | Done (2026-11-25) |
-| **1.0.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Bind `f` in normal mode (`repo-fetch`) to fetch the selected repository from its remote (`git fetch --prune`) | Done (2026-11-25) |
-| **1.0.2** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Press `Return`/`Right` on a repo to open and expand it in Explorer, `Right`/`Left` to expand/collapse folders and move between Explorer and File Viewer, and `Backspace` to return to Source Control | Done (2026-11-25) |
-| **1.0.3** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Direct tab focus and selection via `1`–`9`, `0` (10 tabs in keyboard order), streamlined top bar without sidebar mode hints, and on-demand tab title shrinking so all 10 tabs fit | Done (2026-11-25) |
-| **1.0.4** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Align the top bar tab strip and vertical divider with the main workbench pane when the sidebar is visible | Done (2026-11-25) |
-| **1.0.5** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Add an empty black-space border (1 row top/bottom, 2 columns left/right) around all centered modals (Keybinding Guidance, Command Palette, Branches, Stashes) for readability | Done (2026-11-25) |
-| **1.0.6** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Move keybinding documentation to `keys/keybindings.md` and switch `tab-prev`/`tab-next` from `Alt+,`/`Alt+.` to `Alt+[`/`Alt+]` per `tam-idol/keys/keybindings.md` | Done (2026-11-25) |
-| **1.0.7** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Build against libtam 0.10.0; keep every key of a large read (paste or burst) instead of dropping reads over 64 bytes | Done (2026-11-26) |
-| **1.0.8** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Link libtam-render (libtam 0.13.0) instead of carrying a copy of tam-view's renderer; about 4,400 lines removed | Done (2026-11-26) |
-| **1.1.0** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Paste into prompts (never as commands), Ctrl+P pause, crash and SIGTERM restore, a real not-a-terminal check, the editor run, OSC 52 and key names through libtam; Alt+Shift bindings now match | Done (2026-11-26) |
-| **1.1.1** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Ctrl+P pauses through libtam 0.14.1's `tam_tty_job_stop`, which also pauses a session leader | Done (2026-11-26) |
-| **1.1.2** | [P3](plans/P3-filter-batch-fetch-and-keymap.md) | Guidance modal (`g`): responsive width (~80% wide, higher narrow), word-wrapped descriptions, complete keybindings (`f`/`F`, navigation, modals), and vertical scrolling | Done (2026-11-26) |
+## Phase summary
+
+| Phase | Versions | Goal | Plan | Status |
+| --- | --- | --- | --- | --- |
+| **P1** | 0.1.0–0.1.2 | Initial multi-repo Git workbench, commit graph, explorer, file viewer, and palette | [P1-initial-workbench.md](plans/P1-initial-workbench.md) | Done (2026-11-25) |
+| **P2** | 0.2.0 | Branch checkout/creation modal, stash management, and side-by-side split diff | [P2-branch-stash-and-split-diff.md](plans/P2-branch-stash-and-split-diff.md) | Done (2026-11-25) |
+| **P3** | 0.3.0–1.1.2 | File filtering, batch fetch, user keymaps, v1.0 completion, libtam integration, and UX polish | [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md) | Done (2026-11-26) |
+
+## Phases and milestones
+
+### Phase P1: Initial workbench (0.1.0–0.1.2) — [P1-initial-workbench.md](plans/P1-initial-workbench.md)
+
+| Version | Milestone | Status |
+| --- | --- | --- |
+| **0.1.0** | Multi-repo Source Control sidebar, Git Graph commit history & diff inspector, folder Explorer with Git badges, File Viewer (syntax + rendered Markdown/HTML/Mermaid), tabs, split panes, command palette, and field survey in `ideas/` | Done (2026-11-25) |
+| **0.1.1** | High-contrast 256-color palette for `tam-last` and dynamic repository name column sizing in sidebar | Done (2026-11-25) |
+| **0.1.2** | Single-key `g` shortcut to toggle keybinding guidance overlay alongside `Ctrl+G` | Done (2026-11-25) |
+
+### Phase P2: Branches, stashes, and split diff (0.2.0) — [P2-branch-stash-and-split-diff.md](plans/P2-branch-stash-and-split-diff.md)
+
+| Version | Milestone | Status |
+| --- | --- | --- |
+| **0.2.0** | Branch checkout/creation modal, stash management, and side-by-side diff split mode | Done (2026-11-25) |
+
+### Phase P3: Filtering, batch fetch, keymaps, and v1.x (0.3.0–1.1.2) — [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md)
+
+| Version | Milestone | Status |
+| --- | --- | --- |
+| **0.3.0** | File tree substring filtering, multi-repo batch fetch (`Alt+A`/`F`), and user `keymap.ini` via `tam_ini` | Done (2026-11-25) |
+| **0.3.1** | Bind `s` in normal mode to sync the selected repository with its remote | Done (2026-11-25) |
+| **1.0.0** | Complete v1 multi-repository Git workbench, commit graph, explorer, and file/diff viewer | Done (2026-11-25) |
+| **1.0.1** | Bind `f` in normal mode (`repo-fetch`) to fetch selected repository (`git fetch --prune`) | Done (2026-11-25) |
+| **1.0.2** | Explorer navigation: `Return`/`Right` opens/expands repo or folder, `Left` collapses, `Backspace` returns to Source Control | Done (2026-11-25) |
+| **1.0.3** | Direct tab selection via `1`–`9`/`0`, streamlined top bar, and on-demand tab title shrinking | Done (2026-11-25) |
+| **1.0.4** | Align top bar tab strip and vertical divider with main workbench pane when sidebar is visible | Done (2026-11-25) |
+| **1.0.5** | Add empty black-space border around centered modals for readability | Done (2026-11-25) |
+| **1.0.6** | Move keybinding documentation to `keys/keybindings.md` and switch `tab-prev`/`tab-next` to `Alt+[`/`Alt+]` | Done (2026-11-25) |
+| **1.0.7** | Build against `libtam` 0.10.0; keep every key of a large paste/burst read | Done (2026-11-26) |
+| **1.0.8** | Link `libtam-render` (`libtam` 0.13.0) instead of carrying a local renderer copy (~4,400 lines removed) | Done (2026-11-26) |
+| **1.1.0** | Paste into prompts, `Ctrl+P` pause, crash/SIGTERM restore, TTY check, editor run, OSC 52, and key names via `libtam` | Done (2026-11-26) |
+| **1.1.1** | `Ctrl+P` pauses through `libtam` 0.14.1 `tam_tty_job_stop` (also pauses a session leader) | Done (2026-11-26) |
+| **1.1.2** | Responsive guidance modal (`g`) with word-wrapped descriptions, complete keybindings, and vertical scrolling | Done (2026-11-26) |
+
+## How a milestone is done
+
+A milestone is done when its acceptance checks in the phase plan pass and
+Fred has tried the build. When a milestone lands, bump `VERSION`, update
+the phase plan's status, and update this roadmap in the same change.
