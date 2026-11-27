@@ -97,8 +97,11 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
 
 #define WIDGET_COUNT (sizeof(WIDGET_TABLE) / sizeof(WIDGET_TABLE[0]))
 
+static const knox_widget_cmd_t GUIDANCE_TAB_SHORTCUTS = {
+    "tab-1..tab-0", "0 / 1-9", "Select workbench tab 1-10 directly (0 selects tab 10)"
+};
+
 static const knox_widget_cmd_t GUIDANCE_EXTRA_TABLE[] = {
-    { "tab-1..tab-0", "(tabs)",         "1-9, 0: Select workbench tab 1-10 directly (0 selects tab 10)" },
     { "(commit file)","v",              "In Commit Detail inspector, view full file snapshot at commit in a new tab" },
     { "(Branch modal)","Enter / Alt+N", "Enter: checkout branch, Alt+N: create branch, type to filter, Esc: close" },
     { "(Stash modal)", "n/a/p/d/Enter", "n/s: push, Enter: diff, a: apply, p: pop, d/x: drop, j/k: move, q/Esc: close" },
@@ -1736,7 +1739,6 @@ typedef struct {
 typedef struct {
     const knox_widget_cmd_t *command;
     char keys[40];
-    size_t first_key_len;
     bool custom_key;
 } guidance_entry_t;
 
@@ -1751,14 +1753,8 @@ static int guidance_compare_key(const void *a, const void *b)
 {
     const guidance_entry_t *left = a;
     const guidance_entry_t *right = b;
-    size_t len = left->first_key_len < right->first_key_len
-                 ? left->first_key_len : right->first_key_len;
-    int order = strncasecmp(left->keys, right->keys, len);
-    if (order != 0)
-        return order;
-    if (left->first_key_len != right->first_key_len)
-        return left->first_key_len < right->first_key_len ? -1 : 1;
-    return guidance_compare_command(a, b);
+    int order = knox_guidance_compare_keys(left->keys, right->keys);
+    return order != 0 ? order : guidance_compare_command(a, b);
 }
 
 static void guidance_lines_push(guidance_lines_t *gl, const char *line)
@@ -1909,21 +1905,19 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
     if (app->modal == MODAL_GUIDANCE) {
         guidance_lines_t gl = {0};
-        guidance_entry_t entries[WIDGET_COUNT];
-        for (size_t i = 0; i < WIDGET_COUNT; i++) {
+        guidance_entry_t entries[WIDGET_COUNT + 1];
+        size_t entry_count = sizeof(entries) / sizeof(entries[0]);
+        for (size_t i = 0; i < entry_count; i++) {
             guidance_entry_t *entry = &entries[i];
-            entry->command = &WIDGET_TABLE[i];
+            entry->command = i < WIDGET_COUNT ? &WIDGET_TABLE[i] : &GUIDANCE_TAB_SHORTCUTS;
             entry->custom_key = knox_keymap_find_widget_key(&app->keymap,
                 entry->command->name, entry->keys, sizeof(entry->keys));
             if (!entry->custom_key)
                 snprintf(entry->keys, sizeof(entry->keys), "%s", entry->command->keys);
-            const char *separator = strstr(entry->keys, " / ");
-            entry->first_key_len = separator ? (size_t)(separator - entry->keys)
-                                             : strlen(entry->keys);
         }
-        qsort(entries, WIDGET_COUNT, sizeof(entries[0]), app->guidance_sort_by_command
+        qsort(entries, entry_count, sizeof(entries[0]), app->guidance_sort_by_command
               ? guidance_compare_command : guidance_compare_key);
-        for (size_t i = 0; i < WIDGET_COUNT; i++) {
+        for (size_t i = 0; i < entry_count; i++) {
             const guidance_entry_t *entry = &entries[i];
             char key_disp[sizeof(entry->keys) + 1];
             snprintf(key_disp, sizeof(key_disp), "%s%s", entry->keys,

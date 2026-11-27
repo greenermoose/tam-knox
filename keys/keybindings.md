@@ -78,6 +78,12 @@ Guidance starts sorted by key. Press `Tab`, `Left`, or `Right` in the
 overlay to switch between sorting by key and by command name. The chosen
 order lasts until tam-knox exits.
 
+Key order groups unprefixed, `Alt`, `Ctrl`, and `Meta` bindings in that
+order. Each group lists letters `A`–`Z`, digits `0`–`9`, then special keys
+alphabetically. The first displayed binding determines the position of a
+command with aliases. A chord with several of these modifiers goes in the
+last applicable group, and `Shift` sorts after the same unshifted key.
+
 ## Refreshing file views
 
 After an update, a file view marked `[Stale]` shows the last readable

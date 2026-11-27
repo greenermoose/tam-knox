@@ -627,9 +627,9 @@ int main(int argc, char **argv)
     assert(write(mfd, "\033[15~", 5) == 5); /* F5 bound to guidance via keymap.ini */
     drain_pty(mfd, out, sizeof(out), 150);
     assert(strstr(out, "Keybinding Guidance [Key] 1-") != NULL);
-    const char *source_control = strstr(out, "view-source-control");
-    const char *explorer = strstr(out, "view-explorer");
-    assert(source_control && explorer && source_control < explorer);
+    const char *first_key = strstr(out, "cycle-branch-filter"); /* B */
+    const char *next_key = strstr(out, "branch-modal");        /* c */
+    assert(first_key && next_key && first_key < next_key);
     assert(strstr(out, "\033[2;10H\033[48;5;16m") != NULL);
     assert(strstr(out, "\033[3;10H\033[48;5;16m  \033[0m") != NULL);
     assert(strstr(out, "\033[3;100H\033[48;5;16m  \033[0m") != NULL);
@@ -669,7 +669,9 @@ int main(int argc, char **argv)
     }
     const char *f5 = strstr(out, "F5*");
     const char *f6 = strstr(out, "F6*");
-    assert(f5 && f6 && f5 < f6);
+    const char *tabs = strstr(out, "tab-1..tab-0");
+    const char *escape = strstr(out, "cancel-mode");
+    assert(tabs && escape && f5 && f6 && tabs < escape && escape < f5 && f5 < f6);
 
     /* Leave the split README tab open and open a second file. */
     const char open_other[] = "g\033" "2/z-refresh\rjj\r";

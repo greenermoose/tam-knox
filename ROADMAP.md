@@ -3,7 +3,7 @@
 `tam-knox` is Tamlinux's terminal multi-repository Git workbench and file
 viewer, written in C17 on top of `libtam`.
 
-- **Current version:** `1.1.3` (branch `dev`)
+- **Current version:** `1.1.4` (branch `dev`)
 - **Progress:** All 3 phases done (in maintenance)
 - **Versioning:** Semantic versioning; minor adds features or capabilities,
   patch fixes defects or refines UI and bindings.
@@ -14,7 +14,7 @@ viewer, written in C17 on top of `libtam`.
 | --- | --- | --- | --- | --- |
 | **P1** | 0.1.0–0.1.2 | Initial multi-repo Git workbench, commit graph, explorer, file viewer, and palette | [P1-initial-workbench.md](plans/P1-initial-workbench.md) | Done (2026-11-25) |
 | **P2** | 0.2.0 | Branch checkout/creation modal, stash management, and side-by-side split diff | [P2-branch-stash-and-split-diff.md](plans/P2-branch-stash-and-split-diff.md) | Done (2026-11-25) |
-| **P3** | 0.3.0–1.1.3 | File filtering, batch fetch, user keymaps, v1.0 completion, libtam integration, and UX polish | [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md) | 1.1.3 in Develop |
+| **P3** | 0.3.0–1.1.4 | File filtering, batch fetch, user keymaps, v1.0 completion, libtam integration, and UX polish | [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md) | 1.1.4 in Develop |
 
 ## Phases and milestones
 
@@ -32,7 +32,7 @@ viewer, written in C17 on top of `libtam`.
 | --- | --- | --- |
 | **0.2.0** | Branch checkout/creation modal, stash management, and side-by-side diff split mode | Done (2026-11-25) |
 
-### Phase P3: Filtering, batch fetch, keymaps, and v1.x (0.3.0–1.1.3) — [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md)
+### Phase P3: Filtering, batch fetch, keymaps, and v1.x (0.3.0–1.1.4) — [P3-filter-batch-fetch-and-keymap.md](plans/P3-filter-batch-fetch-and-keymap.md)
 
 | Version | Milestone | Status |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ viewer, written in C17 on top of `libtam`.
 | **1.1.1** | `Ctrl+P` pauses through `libtam` 0.14.1 `tam_tty_job_stop` (also pauses a session leader) | Done (2026-11-26) |
 | **1.1.2** | Responsive guidance modal (`g`) with word-wrapped descriptions, complete keybindings, and vertical scrolling | Done (2026-11-26) |
 | **1.1.3** | Guidance sorted by key or command name, plus `u` to refresh open files from disk | Develop |
+| **1.1.4** | Guidance key order groups chords by modifier, then letters, digits, and special keys | Develop |
 
 ## How a milestone is done
 

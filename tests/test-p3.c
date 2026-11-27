@@ -235,6 +235,26 @@ static void test_batch_fetch(void)
     tam_fs_remove_tree(-100, ws_dir);
 }
 
+static void test_guidance_key_order(void)
+{
+    static const char *const ordered[] = {
+        "a / Ctrl+A", "Z", "0 / 1-9", "9", "Esc", "F5", "F6", "Tab", "Shift+Tab",
+        "Alt+A", "Alt+Shift+A", "Alt+Z", "Alt+0", "Alt+9", "Alt+Esc", "Alt+Tab",
+        "Ctrl+Alt+A", "Ctrl+Z", "Ctrl+0", "Ctrl+Esc", "Ctrl+Tab",
+        "Meta+A", "Ctrl+Meta+Z", "Meta+0", "Meta+Esc", "Meta+Tab"
+    };
+    size_t count = sizeof(ordered) / sizeof(ordered[0]);
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = i + 1; j < count; j++) {
+            assert(knox_guidance_compare_keys(ordered[i], ordered[j]) < 0);
+            assert(knox_guidance_compare_keys(ordered[j], ordered[i]) > 0);
+        }
+    }
+    assert(knox_guidance_compare_keys("K / Ctrl+K", "k") == 0);
+    assert(knox_guidance_compare_keys("Alt+Ctrl+A", "Ctrl+Alt+A") == 0);
+    assert(knox_guidance_compare_keys("Alt+Z", "Alt++") < 0);
+}
+
 static void test_keymap_ini(void)
 {
     tam_key_type_t type = TAM_KEY_NONE;
@@ -310,6 +330,7 @@ int main(void)
     test_explorer_reveal();
     test_batch_fetch();
     test_keymap_ini();
+    test_guidance_key_order();
     printf("test-p3: all explorer filter, reveal, batch fetch, and keymap.ini tests passed\n");
     return 0;
 }

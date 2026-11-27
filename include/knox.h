@@ -599,6 +599,8 @@ typedef struct {
 
 void        knox_keymap_init(knox_keymap_t *km);
 void        knox_keymap_free(knox_keymap_t *km);
+/* Compare the first displayed binding in two guidance key labels. */
+int         knox_guidance_compare_keys(const char *left, const char *right);
 bool        knox_keymap_parse_key(const char *spec, tam_key_type_t *out_type,
                                   uint32_t *out_cp, unsigned *out_mods);
 void        knox_keymap_format_key(tam_key_type_t type, uint32_t cp,

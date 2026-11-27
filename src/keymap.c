@@ -282,3 +282,65 @@ bool knox_keymap_find_widget_key(const knox_keymap_t *km,
     }
     return false;
 }
+
+typedef struct {
+    const char *base;
+    size_t len;
+    unsigned prefix;
+    unsigned key_group;
+    bool shifted;
+} guidance_key_t;
+
+static guidance_key_t guidance_key(const char *label)
+{
+    static const char *const prefixes[] = { "Shift+", "Alt+", "Ctrl+", "Meta+" };
+    const char *end = strstr(label, " / ");
+    if (!end)
+        end = label + strlen(label);
+    guidance_key_t key = {.base = label};
+
+    while (key.base < end) {
+        size_t i = 0;
+        for (; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+            size_t len = strlen(prefixes[i]);
+            if ((size_t)(end - key.base) <= len ||
+                strncasecmp(key.base, prefixes[i], len) != 0)
+                continue;
+            key.base += len;
+            if (i == 0)
+                key.shifted = true;
+            if (i > key.prefix)
+                key.prefix = (unsigned)i;
+            break;
+        }
+        if (i == sizeof(prefixes) / sizeof(prefixes[0]))
+            break;
+    }
+
+    key.len = (size_t)(end - key.base);
+    unsigned char first = (unsigned char)*key.base;
+    if (key.len == 1 && ((first >= 'A' && first <= 'Z') ||
+                         (first >= 'a' && first <= 'z')))
+        key.key_group = 0;
+    else if (key.len == 1 && first >= '0' && first <= '9')
+        key.key_group = 1;
+    else
+        key.key_group = 2;
+    return key;
+}
+
+int knox_guidance_compare_keys(const char *left, const char *right)
+{
+    guidance_key_t a = guidance_key(left);
+    guidance_key_t b = guidance_key(right);
+    if (a.prefix != b.prefix)
+        return a.prefix < b.prefix ? -1 : 1;
+    if (a.key_group != b.key_group)
+        return a.key_group < b.key_group ? -1 : 1;
+    int order = strncasecmp(a.base, b.base, a.len < b.len ? a.len : b.len);
+    if (order != 0)
+        return order;
+    if (a.len != b.len)
+        return a.len < b.len ? -1 : 1;
+    return a.shifted - b.shifted;
+}

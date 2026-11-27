@@ -1,0 +1,35 @@
+W13 GUIDANCE KEY ORDER
+
+Date: 2026-11-27
+AI harness: Codex 0.172.0
+AI model: gpt-6.2-sol
+Continues: W12
+
+GUIDANCE
+
+  Fred: "When sorting by keys, group and sort chord prefixes as follows:
+
+  1) No prefix
+  2) Alt + <keys>
+  3) Ctrl + <keys>
+  4) Meta + <keys>
+
+  When sorting keys, start with A through Z then 0 through 9, then special
+  keys alpabetized (e.g., Esc before Tab)."
+  Fred: "Implement the plan."
+
+DONE
+
+  - Sorted chords by modifier and base key. Tab selection shortcuts now
+    appear with the unprefixed digit keys.
+  - Added comparator tests for all four groups and PTY checks for the
+    tab row and custom keys.
+  - make test, make sanitize, and idol-check passed.
+
+FAILED
+
+  Nothing.
+
+HANDOFF
+
+  - Version 1.1.4 is ready for a development trial.
