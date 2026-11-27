@@ -530,6 +530,7 @@ typedef struct knox_pane {
     size_t              inspect_file_top;
     /* File or diff viewer document */
     knox_viewer_doc_t   doc;
+    bool                file_stale;
     /* Layout geometry */
     int                 x;
     int                 y;

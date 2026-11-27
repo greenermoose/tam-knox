@@ -509,6 +509,10 @@ int main(int argc, char **argv)
     /* Dirty the repo so Changes list has an entry */
     const char *md_dirty = "# Demo Repo\n\nWelcome to **tam-knox** v0.1.0.\n";
     assert(tam_fs_write_atomic(md_file, md_dirty, strlen(md_dirty), 0, 0644) == 0);
+    char *other_file = tam_path_join(repo1, "z-refresh.txt");
+    const char other_initial[] = "Other before\nSecond line\nThird line\n";
+    assert(tam_fs_write_atomic(other_file, other_initial, sizeof(other_initial) - 1,
+                               0, 0644) == 0);
 
     /* Write a temporary keymap.ini to verify user keybinding overrides via TAM_KNOX_KEYMAP */
     char *km_file = tam_path_join(ws_dir, "keymap.ini");
@@ -540,6 +544,7 @@ int main(int argc, char **argv)
             close(sfd);
         setenv("TERM", "xterm-256color", 1);
         setenv("TAM_KNOX_KEYMAP", km_file, 1);
+        unsetenv("NO_COLOR");
         execl(bin, bin, ws_dir, (char *)NULL);
         _exit(127);
     }
@@ -621,18 +626,30 @@ int main(int argc, char **argv)
 
     assert(write(mfd, "\033[15~", 5) == 5); /* F5 bound to guidance via keymap.ini */
     drain_pty(mfd, out, sizeof(out), 150);
-    assert(strstr(out, "Keybinding Guidance") != NULL);
-    assert(strstr(out, "view-source-control") != NULL);
+    assert(strstr(out, "Keybinding Guidance [Key] 1-") != NULL);
+    const char *source_control = strstr(out, "view-source-control");
+    const char *explorer = strstr(out, "view-explorer");
+    assert(source_control && explorer && source_control < explorer);
     assert(strstr(out, "\033[2;10H\033[48;5;16m") != NULL);
     assert(strstr(out, "\033[3;10H\033[48;5;16m  \033[0m") != NULL);
     assert(strstr(out, "\033[3;100H\033[48;5;16m  \033[0m") != NULL);
     assert(strstr(out, "\033[29;10H\033[48;5;16m") != NULL);
 
-    /* Scroll down in guidance to verify f/F, F6*, and word-wrapped tail entries are reachable */
+    /* Switch to name order and back using the three guidance shortcuts. */
+    assert(write(mfd, "\t", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Command] 1-", 3000));
+    const char *branch = strstr(out, "branch-modal");
+    const char *cancel = strstr(out, "cancel-mode");
+    assert(branch && cancel && branch < cancel);
+    assert(write(mfd, "\033[D", 3) == 3);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Key] 1-", 3000));
+    assert(write(mfd, "\033[C", 3) == 3);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Command] 1-", 3000));
+
+    /* Scroll to the contextual help, then switch order and check keymap placement. */
     assert(write(mfd, "\033[6~", 4) == 4); /* PageDown */
     drain_pty(mfd, out, sizeof(out), 150);
-    assert(strstr(out, "repo-fetch") != NULL);
-    assert(strstr(out, "F6*") != NULL);
+    assert(strstr(out, "Keybinding Guidance [Command] 13-") != NULL);
 
     assert(write(mfd, "\033[F", 3) == 3); /* End jumps to bottom of guidance */
     drain_pty(mfd, out, sizeof(out), 150);
@@ -640,12 +657,55 @@ int main(int argc, char **argv)
     assert(strstr(out, "Stash modal") != NULL);
     assert(strstr(out, "keymap.ini") != NULL);
 
-    /* Scroll back to top with Home */
     assert(write(mfd, "\033[H", 3) == 3);
-    drain_pty(mfd, out, sizeof(out), 150);
-    assert(strstr(out, "view-source-control") != NULL);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Command] 1-", 3000));
+    assert(write(mfd, "\033[F", 3) == 3);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "(Guidance)", 3000));
+    assert(write(mfd, "\t", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Key] 1-", 3000));
+    for (int page = 0; page < 5 && !strstr(out, "F6*"); page++) {
+        assert(write(mfd, "\033[6~", 4) == 4);
+        drain_pty(mfd, out, sizeof(out), 150);
+    }
+    const char *f5 = strstr(out, "F5*");
+    const char *f6 = strstr(out, "F6*");
+    assert(f5 && f6 && f5 < f6);
 
-    assert(write(mfd, "g\x11", 2) == 2); /* g closes guidance, then Ctrl+Q quits */
+    /* Leave the split README tab open and open a second file. */
+    const char open_other[] = "g\033" "2/z-refresh\rjj\r";
+    assert(write(mfd, open_other, sizeof(open_other) - 1) == (ssize_t)(sizeof(open_other) - 1));
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Other before", 3000));
+    assert(write(mfd, "\033[F", 3) == 3); /* Move past the line count of the shorter replacement. */
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Line 3/3", 3000));
+    assert(tam_fs_write_atomic(md_file, "Split fresh\n", 12, 0, 0644) == 0);
+    assert(tam_fs_write_atomic(other_file, "Other fresh", 11, 0, 0644) == 0);
+    assert(write(mfd, "u", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Other fresh", 3000));
+    assert(strstr(out, "Line 1/1") != NULL);
+    assert(strstr(out, "Refreshed 1 repositories and 3 file views") != NULL);
+    assert(write(mfd, "3", 1) == 1); /* Show the inactive README split. */
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Split fresh", 3000));
+    const char *first_split = strstr(out, "Split fresh");
+    assert(first_split && strstr(first_split + strlen("Split fresh"), "Split fresh"));
+    assert(write(mfd, "\033b", 2) == 2); /* Widen the split headers. */
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Raw Syntax", 3000));
+    assert(write(mfd, "R", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Rendered [R]", 3000));
+
+    assert(unlink(md_file) == 0);
+    assert(write(mfd, "\x15", 1) == 1); /* Ctrl+U updates the same buffers. */
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "[Stale]", 3000));
+    assert(strstr(out, "Split fresh") != NULL);
+    assert(strstr(out, "2 stale") != NULL);
+    assert(tam_fs_write_atomic(md_file, "Recovered\n", 10, 0, 0644) == 0);
+    const char palette_update[] = "\x05" "update\r";
+    assert(write(mfd, palette_update, sizeof(palette_update) - 1) ==
+           (ssize_t)(sizeof(palette_update) - 1));
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "Recovered", 3000));
+    assert(strstr(out, "[Stale]") == NULL);
+    assert(strstr(out, "Rendered [R]") != NULL);
+
+    assert(write(mfd, "\x11", 1) == 1);
     drain_pty(mfd, out, sizeof(out), 200);
 
     int status = 0;
@@ -654,6 +714,7 @@ int main(int argc, char **argv)
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
     free(km_file);
+    free(other_file);
     free(md_file);
     free(repo1);
     tam_fs_remove_tree(-100, ws_dir);

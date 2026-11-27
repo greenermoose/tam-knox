@@ -1,0 +1,29 @@
+W12 GUIDANCE SORT AND DISK REFRESH
+
+Date: 2026-11-27
+AI harness: Codex 0.172.0
+AI model: gpt-6.2-sol
+
+GUIDANCE
+
+  Fred: "Improve the guidance for tam-knox. Allow sorting by key or by
+  command name. Default is sorted by key. Also, add a "u" update command
+  that refreshes content from disk so you're not looking at stale files."
+  Fred: "No, s is already used for sync. Use Tab or left or right arrow to
+  switch between key and command-name order in guidance."
+  Fred: "Implement the plan."
+
+DONE
+
+  - Added in-session guidance sorting and disk refresh across file panes.
+  - PTY coverage includes key overrides, deleted files, and recovery.
+  - make test, make sanitize, and idol-check passed.
+
+FAILED
+
+  - LeakSanitizer could not inspect threads in the sandbox. The same
+    suite passed outside it.
+
+HANDOFF
+
+  - Version 1.1.3 is ready for a development trial.

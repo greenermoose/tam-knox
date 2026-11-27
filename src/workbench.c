@@ -86,7 +86,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "find",                "Ctrl+F / /",    "Find in repo list, Explorer tree, commit graph, or file" },
     { "find-next",           "n",             "Jump to next search match" },
     { "find-prev",           "N",             "Jump to previous search match" },
-    { "update",              "Ctrl+U",        "Refresh repository statuses, commit graph, and explorer" },
+    { "update",              "u / Ctrl+U",    "Refresh Git status, graph, Explorer, and open files from disk" },
     { "copy",                "Ctrl+C",        "Copy selection, commit hash, or file path (OSC 52)" },
     { "execute",             "Ctrl+E",        "Open Command Palette & One-Handed Chord Composer" },
     { "guidance",            "g / G / Ctrl+G","Show keybinding guidance overlay" },
@@ -142,6 +142,7 @@ typedef struct {
     size_t              prompt_len;
     size_t              palette_cursor;
     size_t              guidance_top;
+    bool                guidance_sort_by_command;
     unsigned            chord_mods; /* Latched modifiers in Ctrl+E composer */
     /* Branch & Stash modal lists */
     knox_branch_info_t *branch_list;
@@ -492,6 +493,74 @@ static void app_inspect_commit_in_split(knox_app_t *app, knox_pane_t *graph_pane
     }
 }
 
+static bool app_reload_file_pane(knox_app_t *app, knox_pane_t *pane)
+{
+    knox_viewer_doc_t *doc = &pane->doc;
+    knox_viewer_doc_t fresh = {0};
+    int width = pane->w > 4 ? pane->w - 2 : 72;
+    if (knox_viewer_open_file(&fresh, doc->abs_path, doc->repo_name, false,
+                              width, app->opts.ascii) != 0 || !fresh.abs_path) {
+        knox_viewer_free(&fresh);
+        pane->file_stale = true;
+        return false;
+    }
+
+    fresh.markup_fmt = doc->markup_fmt;
+    fresh.render_mode = doc->render_mode &&
+        knox_viewer_ensure_rendered(&fresh, width, app->opts.ascii) == 0;
+    size_t lines = fresh.render_mode ? fresh.rend_line_count : fresh.line_count;
+    size_t last_line = lines > 0 ? lines - 1 : 0;
+    fresh.cursor_line = doc->cursor_line < last_line ? doc->cursor_line : last_line;
+    fresh.top_line = doc->top_line < fresh.cursor_line ? doc->top_line : fresh.cursor_line;
+    fresh.left_col = doc->left_col;
+    fresh.wrap_lines = doc->wrap_lines;
+    memcpy(fresh.search_query, doc->search_query, sizeof(fresh.search_query));
+
+    knox_viewer_free(doc);
+    *doc = fresh;
+    pane->file_stale = false;
+    return true;
+}
+
+static void app_reload_file_panes(knox_app_t *app, knox_split_node_t *node,
+                                  size_t *reloaded, size_t *stale)
+{
+    if (!node)
+        return;
+    if (node->type != KNOX_NODE_LEAF) {
+        app_reload_file_panes(app, node->child1, reloaded, stale);
+        app_reload_file_panes(app, node->child2, reloaded, stale);
+        return;
+    }
+    knox_pane_t *pane = node->pane;
+    if (pane && pane->content == KNOX_PANE_VIEWER && pane->doc.abs_path) {
+        if (app_reload_file_pane(app, pane))
+            (*reloaded)++;
+        else
+            (*stale)++;
+    }
+}
+
+static void app_update(knox_app_t *app)
+{
+    for (size_t i = 0; i < app->ws.count; i++)
+        knox_repo_refresh_status(&app->ws.repos[i]);
+    knox_explorer_rebuild(&app->explorer, &app->ws);
+    app->graph_loaded = false;
+
+    size_t reloaded = 0;
+    size_t stale = 0;
+    for (size_t i = 0; i < app->tab_count; i++)
+        app_reload_file_panes(app, app->tabs[i].root, &reloaded, &stale);
+
+    if (stale)
+        app_set_status(app, "Reloaded %zu file views, %zu stale (could not read from disk)",
+                       reloaded, stale);
+    else
+        app_set_status(app, "Refreshed %zu repositories and %zu file views",
+                       app->ws.count, reloaded);
+}
+
 static void app_open_in_external_editor(knox_app_t *app)
 {
     const char *path = NULL;
@@ -547,21 +616,8 @@ static void app_open_in_external_editor(knox_app_t *app)
         knox_repo_refresh_status(&app->ws.repos[app->active_repo_idx]);
     knox_explorer_refresh_git_status(&app->explorer, &app->ws);
     if (ap && ap->content == KNOX_PANE_VIEWER && ap->doc.abs_path &&
-        strcmp(ap->doc.abs_path, path) == 0) {
-        size_t saved_line = ap->doc.cursor_line;
-        size_t saved_top = ap->doc.top_line;
-        char *p_dup = strdup(path);
-        char *r_dup = ap->doc.repo_name ? strdup(ap->doc.repo_name) : NULL;
-        bool was_render = ap->doc.render_mode;
-        if (p_dup) {
-            knox_viewer_open_file(&ap->doc, p_dup, r_dup, was_render,
-                                  ap->w > 4 ? ap->w - 2 : 72, app->opts.ascii);
-            ap->doc.cursor_line = saved_line;
-            ap->doc.top_line = saved_top;
-        }
-        free(p_dup);
-        free(r_dup);
-    }
+        strcmp(ap->doc.abs_path, path) == 0)
+        app_reload_file_pane(app, ap);
     app_set_status(app, "Returned from %s", editor);
 }
 
@@ -1465,7 +1521,8 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
                              ? (doc->side_by_side ? "Side-by-Side Diff [d/R]" : "Unified Diff [d/R]")
                              : (doc->render_mode ? "Rendered [R]" : "Raw Syntax [R]");
     snprintf(hdr, sizeof(hdr),
-             " %s | Mode: %s | Lang: %s | Line %zu/%zu [Alt+E Edit]",
+             " %s%s | Mode: %s | Lang: %s | Line %zu/%zu [Alt+E Edit]",
+             p->file_stale ? "[Stale] " : "",
              doc->breadcrumb ? doc->breadcrumb : (doc->title ? doc->title : "File"),
              mode_label,
              knox_syntax_lang_name(doc->lang),
@@ -1676,6 +1733,34 @@ typedef struct {
     size_t cap;
 } guidance_lines_t;
 
+typedef struct {
+    const knox_widget_cmd_t *command;
+    char keys[40];
+    size_t first_key_len;
+    bool custom_key;
+} guidance_entry_t;
+
+static int guidance_compare_command(const void *a, const void *b)
+{
+    const guidance_entry_t *left = a;
+    const guidance_entry_t *right = b;
+    return strcmp(left->command->name, right->command->name);
+}
+
+static int guidance_compare_key(const void *a, const void *b)
+{
+    const guidance_entry_t *left = a;
+    const guidance_entry_t *right = b;
+    size_t len = left->first_key_len < right->first_key_len
+                 ? left->first_key_len : right->first_key_len;
+    int order = strncasecmp(left->keys, right->keys, len);
+    if (order != 0)
+        return order;
+    if (left->first_key_len != right->first_key_len)
+        return left->first_key_len < right->first_key_len ? -1 : 1;
+    return guidance_compare_command(a, b);
+}
+
 static void guidance_lines_push(guidance_lines_t *gl, const char *line)
 {
     if (!gl || !line)
@@ -1824,17 +1909,27 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
     if (app->modal == MODAL_GUIDANCE) {
         guidance_lines_t gl = {0};
+        guidance_entry_t entries[WIDGET_COUNT];
         for (size_t i = 0; i < WIDGET_COUNT; i++) {
-            char key_disp[40];
-            char custom_key[32];
-            if (knox_keymap_find_widget_key(&app->keymap, WIDGET_TABLE[i].name,
-                                            custom_key, sizeof(custom_key))) {
-                snprintf(key_disp, sizeof(key_disp), "%s*", custom_key);
-            } else {
-                snprintf(key_disp, sizeof(key_disp), "%s", WIDGET_TABLE[i].keys);
-            }
+            guidance_entry_t *entry = &entries[i];
+            entry->command = &WIDGET_TABLE[i];
+            entry->custom_key = knox_keymap_find_widget_key(&app->keymap,
+                entry->command->name, entry->keys, sizeof(entry->keys));
+            if (!entry->custom_key)
+                snprintf(entry->keys, sizeof(entry->keys), "%s", entry->command->keys);
+            const char *separator = strstr(entry->keys, " / ");
+            entry->first_key_len = separator ? (size_t)(separator - entry->keys)
+                                             : strlen(entry->keys);
+        }
+        qsort(entries, WIDGET_COUNT, sizeof(entries[0]), app->guidance_sort_by_command
+              ? guidance_compare_command : guidance_compare_key);
+        for (size_t i = 0; i < WIDGET_COUNT; i++) {
+            const guidance_entry_t *entry = &entries[i];
+            char key_disp[sizeof(entry->keys) + 1];
+            snprintf(key_disp, sizeof(key_disp), "%s%s", entry->keys,
+                     entry->custom_key ? "*" : "");
             guidance_append_wrapped(&gl, box_w, key_disp,
-                                    WIDGET_TABLE[i].name, WIDGET_TABLE[i].desc);
+                                    entry->command->name, entry->command->desc);
         }
         for (size_t i = 0; i < GUIDANCE_EXTRA_COUNT; i++) {
             guidance_append_wrapped(&gl, box_w,
@@ -1843,7 +1938,8 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
                                     GUIDANCE_EXTRA_TABLE[i].desc);
         }
 
-        size_t list_rows = (box_h > 1) ? (size_t)(box_h - 1) : 0;
+        int header_rows = box_h > 2 ? 2 : 1;
+        size_t list_rows = box_h > header_rows ? (size_t)(box_h - header_rows) : 0;
         size_t max_top = (gl.count > list_rows) ? (gl.count - list_rows) : 0;
         if (app->guidance_top > max_top)
             app->guidance_top = max_top;
@@ -1855,12 +1951,17 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
         char title[256];
         snprintf(title, sizeof(title),
-                 " tam-knox Keybinding Guidance [%zu-%zu/%zu] (Up/Down/PgUp/PgDn: scroll | g/Esc: close)",
+                 " Keybinding Guidance [%s] %zu-%zu/%zu",
+                 app->guidance_sort_by_command ? "Command" : "Key",
                  first_row, last_row, gl.count);
         frame_move_write(frame, y0, x0, title, box_w, hdr_bg, true);
+        if (header_rows == 2)
+            frame_move_write(frame, y0 + 1, x0,
+                             " Tab/Left/Right sort | Up/Down scroll | g/Esc close",
+                             box_w, hdr_bg, true);
 
-        for (int r = 1; r < box_h; r++) {
-            size_t idx = app->guidance_top + (size_t)(r - 1);
+        for (int r = header_rows; r < box_h; r++) {
+            size_t idx = app->guidance_top + (size_t)(r - header_rows);
             const char *line = (idx < gl.count) ? gl.lines[idx] : "";
             frame_move_write(frame, y0 + r, x0, line, box_w, bg, true);
         }
@@ -2624,12 +2725,7 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         if (ap && ap->content == KNOX_PANE_VIEWER)
             knox_viewer_search(&ap->doc, NULL, fwd, true);
     } else if (strcmp(widget, "update") == 0) {
-        for (size_t i = 0; i < app->ws.count; i++)
-            knox_repo_refresh_status(&app->ws.repos[i]);
-        knox_explorer_rebuild(&app->explorer, &app->ws);
-        if (app->active_repo_idx < app->ws.count)
-            app_ensure_repo_graph(app, app->active_repo_idx, true, true, true);
-        app_set_status(app, "Refreshed all %zu repositories", app->ws.count);
+        app_update(app);
     } else if (strcmp(widget, "open-in-editor") == 0) {
         app_open_in_external_editor(app);
     } else if (strcmp(widget, "copy") == 0) {
@@ -2914,6 +3010,12 @@ static void handle_modal_key(knox_app_t *app, const tam_key_event_t *ev)
     }
 
     if (app->modal == MODAL_GUIDANCE) {
+        if (ev->type == TAM_KEY_TAB || ev->type == TAM_KEY_LEFT ||
+            ev->type == TAM_KEY_RIGHT) {
+            app->guidance_sort_by_command = !app->guidance_sort_by_command;
+            app->guidance_top = 0;
+            return;
+        }
         if (ev->type == TAM_KEY_UP ||
             (ev->type == TAM_KEY_CHAR && !(ev->mods & (TAM_MOD_CTRL | TAM_MOD_ALT)) &&
              ev->codepoint == 'k')) {
@@ -3327,6 +3429,9 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 's':
         case 'S':
             app_execute_widget(app, "repo-sync");
+            return;
+        case 'u':
+            app_execute_widget(app, "update");
             return;
         case 'f':
             app_execute_widget(app, "repo-fetch");

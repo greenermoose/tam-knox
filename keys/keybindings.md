@@ -69,7 +69,19 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 | `b`, `PageUp` | `b`, `PageUp` | `page-up` | Scroll page up |
 | `/`, `n`, `N` | `/`, `n`, `N` | `find`, `find-next`, `find-prev` | Search and step through matches |
 | `g` | `g` | `guidance` | Toggle keybinding guidance overlay (alias for `Ctrl+G`) |
+| `u` | `u` | `update` | Refresh Git status, Git Graph, Explorer, and all open disk-backed file views (alias for `Ctrl+U`) |
 | `q` | `q` | `quit` | Quit `tam-knox` (when not typing in a prompt) |
+
+## Guidance overlay
+
+Guidance starts sorted by key. Press `Tab`, `Left`, or `Right` in the
+overlay to switch between sorting by key and by command name. The chosen
+order lasts until tam-knox exits.
+
+## Refreshing file views
+
+After an update, a file view marked `[Stale]` shows the last readable
+contents. Correct the file on disk and update again to clear the marker.
 
 ## User `keymap.ini` Customization
 

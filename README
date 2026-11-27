@@ -68,12 +68,14 @@ KEYS
   Ctrl+F, /            Find in repo list, filter Explorer tree (live; Esc
                        clears), search commit graph, or find in file
   n, N                 Next or previous search match
-  Ctrl+U               Update / refresh repositories, graph, and views
+  u, Ctrl+U            Refresh Git status, Git Graph, Explorer, and open files
   Ctrl+N               Open a new workbench tab
   Ctrl+D               Close active split pane or tab
   Ctrl+C               Copy selection, commit hash, or path (OSC 52)
   Ctrl+E               Open command palette and one-handed chord composer
   g, Ctrl+G            Toggle keybinding guidance overlay
+  Tab, Left, Right     In guidance, toggle sorting by key or command name
+                       (starts sorted by key)
   Ctrl+Q, q            Quit tam-knox
 
 

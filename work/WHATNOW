@@ -3,11 +3,15 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-26, with W11
+Updated: 2026-11-27, with W12
 
 STATE
 
-  Version 1.1.2 on branch dev (follows tam-idol 1.3.0; ROADMAP.md updated
+  Version 1.1.3 on branch dev adds guidance sort controls and disk refresh
+  for open file views. make test, make sanitize, and idol-check passed.
+  Fred's trial is pending.
+
+  Version 1.1.2 (follows tam-idol 1.3.0; ROADMAP.md updated
   in W11). Phases P1 (0.1.0-0.1.2), P2 (0.2.0), and
   P3 (0.3.0-1.0.6), 1.0.7-1.1.1 (libtam 0.10.0-0.14.1), and 1.1.2
   (scrollable word-wrapped guidance modal) are complete and pass make

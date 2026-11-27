@@ -40,6 +40,16 @@
 
 ## Acceptance
 
+### 1.1.3 guidance and update
+
+- Guidance opens in key order at startup. `Tab`, `Left`, and `Right` switch
+  between key order and command-name order inside guidance.
+- `u` and `Ctrl+U` use the same update command. Open file views reload
+  across tabs and splits. A failed reload marks that view stale until a
+  successful refresh.
+
+### P3 checks
+
 - `make`, `make test`, and `make sanitize` pass with zero errors or leaks.
 - `~/Code/tamlinux/tam-idol/tools/idol-check .` passes.
 - Unit tests (`tests/test-p3.c`) and PTY tests (`tests/test-pty.c`) cover
