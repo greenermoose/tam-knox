@@ -3,12 +3,15 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-27, with W13
+Updated: 2026-11-27, with W14
 
 STATE
 
-  Version 1.1.4 on branch dev groups guidance by modifier and sorts each
-  group by letters, digits, then special keys. Fred's trial is pending.
+  Version 1.1.5 on branch dev puts the active guidance sort column first
+  and separates shortcut aliases with spaces. Fred's trial is pending.
+
+  Version 1.1.4 grouped guidance keys by modifier, then put letters,
+  digits, and special keys in that order within each group.
 
   Version 1.1.3 added guidance sort controls and disk refresh across open
   file views.

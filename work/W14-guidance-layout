@@ -1,0 +1,39 @@
+W14 GUIDANCE LAYOUT
+
+Date: 2026-11-27
+AI harness: Codex 0.172.0
+AI model: gpt-6.2-sol
+Continues: W13
+
+GUIDANCE
+
+  Fred: "Change how guidance works in two ways:
+
+  1) In list of keys, remove / as divider. Just show all keys, i.e. change
+
+  B / Alt+F
+
+  to
+
+  B Alt+F
+
+  2) When sorting by commands, switch columns so that commands are far
+  left column. When sorting by keys, they are far left column (i.e., keep
+  the column order as it is now when sorting by keys, but switch it when
+  sorting by command)."
+  Fred: "Implement the plan."
+
+DONE
+
+  - Guidance displays aliases with spaces and puts the active sort field
+    first in wide and narrow layouts.
+  - PTY tests cover both layouts and the literal slash shortcut.
+  - make test, make sanitize, and idol-check passed.
+
+FAILED
+
+  Nothing.
+
+HANDOFF
+
+  - Version 1.1.5 is ready for a development trial.

@@ -76,7 +76,9 @@ universal Tamlinux meaning, no binding uses `Meta` (reserved for
 
 Guidance starts sorted by key. Press `Tab`, `Left`, or `Right` in the
 overlay to switch between sorting by key and by command name. The chosen
-order lasts until tam-knox exits.
+order lasts until tam-knox exits. The field you sort by appears first.
+Spaces separate shortcuts for the same command. For example, `B Alt+F`
+lists two shortcuts, and `Ctrl+F /` includes the `/` shortcut.
 
 Key order groups unprefixed, `Alt`, `Ctrl`, and `Meta` bindings in that
 order. Each group lists letters `A`–`Z`, digits `0`–`9`, then special keys

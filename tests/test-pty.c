@@ -86,6 +86,19 @@ static bool wait_for_pty_text(int mfd, char *buf, size_t cap,
     return strstr(buf, needle) != NULL;
 }
 
+static bool has_guidance_columns(const char *frame, const char *left, const char *right)
+{
+    char prefix[64];
+    snprintf(prefix, sizeof(prefix), "  %s ", left);
+    const char *row = strstr(frame, prefix);
+    if (!row)
+        return false;
+    row += strlen(prefix);
+    row += strspn(row, " ");
+    size_t len = strlen(right);
+    return strncmp(row, right, len) == 0 && (row[len] == ' ' || row[len] == '\033');
+}
+
 static void test_pty_repo_sync(const char *bin)
 {
     char tmp_tpl[] = "/tmp/knox-pty-sync-XXXXXX";
@@ -630,6 +643,7 @@ int main(int argc, char **argv)
     const char *first_key = strstr(out, "cycle-branch-filter"); /* B */
     const char *next_key = strstr(out, "branch-modal");        /* c */
     assert(first_key && next_key && first_key < next_key);
+    assert(has_guidance_columns(out, "B Alt+F", "cycle-branch-filter"));
     assert(strstr(out, "\033[2;10H\033[48;5;16m") != NULL);
     assert(strstr(out, "\033[3;10H\033[48;5;16m  \033[0m") != NULL);
     assert(strstr(out, "\033[3;100H\033[48;5;16m  \033[0m") != NULL);
@@ -641,6 +655,9 @@ int main(int argc, char **argv)
     const char *branch = strstr(out, "branch-modal");
     const char *cancel = strstr(out, "cancel-mode");
     assert(branch && cancel && branch < cancel);
+    assert(has_guidance_columns(out, "branch-modal", "c C Alt+K"));
+    assert(has_guidance_columns(out, "find", "Ctrl+F /"));
+    assert(strstr(out, "Ctrl+F / /") == NULL);
     assert(write(mfd, "\033[D", 3) == 3);
     assert(wait_for_pty_text(mfd, out, sizeof(out), "Keybinding Guidance [Key] 1-", 3000));
     assert(write(mfd, "\033[C", 3) == 3);
@@ -672,6 +689,17 @@ int main(int argc, char **argv)
     const char *tabs = strstr(out, "tab-1..tab-0");
     const char *escape = strstr(out, "cancel-mode");
     assert(tabs && escape && f5 && f6 && tabs < escape && escape < f5 && f5 < f6);
+
+    /* The compact layout also puts the selected sort field first. */
+    struct winsize narrow = { .ws_row = 30, .ws_col = 52 };
+    assert(ioctl(mfd, TIOCSWINSZ, &narrow) == 0);
+    assert(write(mfd, "\t", 1) == 1);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "  branch-modal  c C Alt+K", 3000));
+    assert(strstr(out, "    Checkout or create a branch") != NULL);
+    assert(write(mfd, "\033[D", 3) == 3);
+    assert(wait_for_pty_text(mfd, out, sizeof(out), "  B Alt+F  cycle-branch-filter", 3000));
+    assert(ioctl(mfd, TIOCSWINSZ, &wsz) == 0);
+    drain_pty(mfd, out, sizeof(out), 150);
 
     /* Leave the split README tab open and open a second file. */
     const char open_other[] = "g\033" "2/z-refresh\rjj\r";

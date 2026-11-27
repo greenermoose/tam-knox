@@ -104,8 +104,8 @@ static const knox_widget_cmd_t GUIDANCE_TAB_SHORTCUTS = {
 static const knox_widget_cmd_t GUIDANCE_EXTRA_TABLE[] = {
     { "(commit file)","v",              "In Commit Detail inspector, view full file snapshot at commit in a new tab" },
     { "(Branch modal)","Enter / Alt+N", "Enter: checkout branch, Alt+N: create branch, type to filter, Esc: close" },
-    { "(Stash modal)", "n/a/p/d/Enter", "n/s: push, Enter: diff, a: apply, p: pop, d/x: drop, j/k: move, q/Esc: close" },
-    { "(Guidance)",    "Up/Dn/PgUp/Dn", "Scroll guidance (j/k, b/Space, Home/End); g/q/Esc close (* = keymap.ini override)" }
+    { "(Stash modal)", "n a p d Enter", "n/s: push, Enter: diff, a: apply, p: pop, d/x: drop, j/k: move, q/Esc: close" },
+    { "(Guidance)",    "Up Down PageUp PageDown", "Scroll guidance (j/k, b/Space, Home/End); g/q/Esc close (* = keymap.ini override)" }
 };
 
 #define GUIDANCE_EXTRA_COUNT (sizeof(GUIDANCE_EXTRA_TABLE) / sizeof(GUIDANCE_EXTRA_TABLE[0]))
@@ -1786,17 +1786,29 @@ static void guidance_lines_free(guidance_lines_t *gl)
     gl->cap = 0;
 }
 
+static void guidance_format_keys(guidance_entry_t *entry)
+{
+    char *out = entry->keys;
+    for (const char *p = entry->keys; *p; p++) {
+        if (strncmp(p, " / ", 3) == 0)
+            p += 2;
+        *out++ = *p;
+    }
+    if (entry->custom_key && out < entry->keys + sizeof(entry->keys) - 1)
+        *out++ = '*';
+    *out = '\0';
+}
+
 static void guidance_append_wrapped(guidance_lines_t *gl, int box_w,
-                                    const char *keys, const char *name,
+                                    const char *left, int left_w,
+                                    const char *right, int right_w,
                                     const char *desc)
 {
-    const int desc_col = 42; /* "  %-16s %-22s " */
+    const int desc_col = 2 + left_w + 1 + right_w + 1;
     const char *d = desc ? desc : "";
 
-    if (box_w >= 58) {
+    if (box_w >= 58 && box_w - desc_col - 1 >= 12) {
         int desc_w = box_w - desc_col - 1;
-        if (desc_w < 12)
-            desc_w = 12;
         bool first = true;
         while (*d || first) {
             while (*d == ' ' && !first)
@@ -1814,8 +1826,8 @@ static void guidance_append_wrapped(guidance_lines_t *gl, int box_w,
             }
             char line[512];
             if (first) {
-                snprintf(line, sizeof(line), "  %-16s %-22s %.*s",
-                         keys, name, (int)take, d);
+                snprintf(line, sizeof(line), "  %-*s %-*s %.*s",
+                         left_w, left, right_w, right, (int)take, d);
                 first = false;
             } else {
                 snprintf(line, sizeof(line), "%*s%.*s",
@@ -1828,8 +1840,15 @@ static void guidance_append_wrapped(guidance_lines_t *gl, int box_w,
         }
     } else {
         char hdr[256];
-        snprintf(hdr, sizeof(hdr), "  %s  (%s)", keys, name);
-        guidance_lines_push(gl, hdr);
+        int width = snprintf(hdr, sizeof(hdr), "  %s  %s", left, right);
+        if (width <= box_w) {
+            guidance_lines_push(gl, hdr);
+        } else {
+            snprintf(hdr, sizeof(hdr), "  %s", left);
+            guidance_lines_push(gl, hdr);
+            snprintf(hdr, sizeof(hdr), "    %s", right);
+            guidance_lines_push(gl, hdr);
+        }
         int desc_w = box_w - 5;
         if (desc_w < 12)
             desc_w = 12;
@@ -1905,9 +1924,10 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
 
     if (app->modal == MODAL_GUIDANCE) {
         guidance_lines_t gl = {0};
-        guidance_entry_t entries[WIDGET_COUNT + 1];
+        guidance_entry_t entries[WIDGET_COUNT + 1 + GUIDANCE_EXTRA_COUNT];
+        size_t sortable_count = WIDGET_COUNT + 1;
         size_t entry_count = sizeof(entries) / sizeof(entries[0]);
-        for (size_t i = 0; i < entry_count; i++) {
+        for (size_t i = 0; i < sortable_count; i++) {
             guidance_entry_t *entry = &entries[i];
             entry->command = i < WIDGET_COUNT ? &WIDGET_TABLE[i] : &GUIDANCE_TAB_SHORTCUTS;
             entry->custom_key = knox_keymap_find_widget_key(&app->keymap,
@@ -1915,21 +1935,33 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
             if (!entry->custom_key)
                 snprintf(entry->keys, sizeof(entry->keys), "%s", entry->command->keys);
         }
-        qsort(entries, entry_count, sizeof(entries[0]), app->guidance_sort_by_command
+        for (size_t i = 0; i < GUIDANCE_EXTRA_COUNT; i++) {
+            guidance_entry_t *entry = &entries[sortable_count + i];
+            entry->command = &GUIDANCE_EXTRA_TABLE[i];
+            entry->custom_key = false;
+            snprintf(entry->keys, sizeof(entry->keys), "%s", entry->command->keys);
+        }
+
+        bool command_first = app->guidance_sort_by_command;
+        qsort(entries, sortable_count, sizeof(entries[0]), command_first
               ? guidance_compare_command : guidance_compare_key);
+
+        int key_width = 16;
+        for (size_t i = 0; i < entry_count; i++) {
+            guidance_format_keys(&entries[i]);
+            int width = (int)strlen(entries[i].keys);
+            if (width > key_width)
+                key_width = width;
+        }
+        const int command_width = 22;
         for (size_t i = 0; i < entry_count; i++) {
             const guidance_entry_t *entry = &entries[i];
-            char key_disp[sizeof(entry->keys) + 1];
-            snprintf(key_disp, sizeof(key_disp), "%s%s", entry->keys,
-                     entry->custom_key ? "*" : "");
-            guidance_append_wrapped(&gl, box_w, key_disp,
-                                    entry->command->name, entry->command->desc);
-        }
-        for (size_t i = 0; i < GUIDANCE_EXTRA_COUNT; i++) {
             guidance_append_wrapped(&gl, box_w,
-                                    GUIDANCE_EXTRA_TABLE[i].keys,
-                                    GUIDANCE_EXTRA_TABLE[i].name,
-                                    GUIDANCE_EXTRA_TABLE[i].desc);
+                                    command_first ? entry->command->name : entry->keys,
+                                    command_first ? command_width : key_width,
+                                    command_first ? entry->keys : entry->command->name,
+                                    command_first ? key_width : command_width,
+                                    entry->command->desc);
         }
 
         int header_rows = box_h > 2 ? 2 : 1;
@@ -1951,7 +1983,7 @@ static void render_modal_overlay(knox_app_t *app, tam_str_t *frame,
         frame_move_write(frame, y0, x0, title, box_w, hdr_bg, true);
         if (header_rows == 2)
             frame_move_write(frame, y0 + 1, x0,
-                             " Tab/Left/Right sort | Up/Down scroll | g/Esc close",
+                             " Tab Left Right sort | Up Down scroll | g Esc close",
                              box_w, hdr_bg, true);
 
         for (int r = header_rows; r < box_h; r++) {
