@@ -3,9 +3,13 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-28, with W15
+Updated: 2026-11-28, with table-wrap fix
 
 STATE
+
+  Version 1.1.7 on branch dev links libtam 0.15.2 so long Markdown and
+  HTML table cells wrap across lines instead of truncating with ellipses.
+  Fred's trial is pending.
 
   Version 1.1.6 on branch dev word-wraps diff display panels by default
   (both Unified Diff and Side-by-Side Diff) and adds w / W (toggle-wrap)

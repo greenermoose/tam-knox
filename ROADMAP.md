@@ -3,7 +3,7 @@
 `tam-knox` is Tamlinux's terminal multi-repository Git workbench and file
 viewer, written in C17 on top of `libtam`.
 
-- **Current version:** `1.1.5` (branch `dev`)
+- **Current version:** `1.1.7` (branch `dev`)
 - **Progress:** All 3 phases done (in maintenance)
 - **Versioning:** Semantic versioning; minor adds features or capabilities,
   patch fixes defects or refines UI and bindings.
@@ -53,6 +53,8 @@ viewer, written in C17 on top of `libtam`.
 | **1.1.3** | Guidance sorted by key or command name, plus `u` to refresh open files from disk | Develop |
 | **1.1.4** | Guidance key order groups chords by modifier, then letters, digits, and special keys | Develop |
 | **1.1.5** | Guidance leads with the active sort column and uses spaces between shortcut aliases | Develop |
+| **1.1.6** | Word-wrap diff display panels by default and add `w`/`W` (`toggle-wrap`) | Develop |
+| **1.1.7** | Wrap long Markdown/HTML table cells across lines instead of truncating with ellipses (`libtam` 0.15.2) | Develop |
 
 ## How a milestone is done
 

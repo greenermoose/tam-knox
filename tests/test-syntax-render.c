@@ -48,14 +48,16 @@ static void test_viewer_markdown_and_html_render(void)
         "A paragraph with **bold** and `code`.\n\n"
         "| Col A | Col B |\n"
         "| --- | --- |\n"
-        "| val 1 | val 2 |\n";
+        "| val 1 | A deliberately long table cell description that should wrap across multiple lines instead of being truncated with an ellipsis |\n";
     assert(tam_fs_write_atomic(tmp_md, md, strlen(md), 0, 0644) == 0);
 
     knox_viewer_doc_t doc = {0};
-    assert(knox_viewer_open_file(&doc, tmp_md, "test-repo", true, 72, false) == 0);
+    assert(knox_viewer_open_file(&doc, tmp_md, "test-repo", true, 60, false) == 0);
     assert(doc.render_mode == true);
-    assert(doc.rend_line_count >= 5);
+    assert(doc.rend_line_count >= 7);
     assert(strstr(doc.rendered_buf.data, "Title Heading") != NULL);
+    assert(strstr(doc.rendered_buf.data, "\xe2\x80\xa6") == NULL);
+    assert(strstr(doc.rendered_buf.data, "an ellipsis") != NULL);
 
     /* Toggle to raw mode and verify raw line count & search */
     assert(knox_viewer_toggle_render(&doc, 72, false) == 0);
