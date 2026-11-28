@@ -1,0 +1,37 @@
+W15 DIFF WORD WRAP
+
+Date: 2026-11-28
+AI harness: agy 1.5.19
+AI model: gemini-4-neon-medium
+Continues: W14
+
+GUIDANCE
+
+  Fred: "When showing changes in tam-knox, word wrap the display panel
+  so you can see the whole line."
+  Fred: "1 yes, w for wrap-toggle / 2 yes, wrap both / Approved. Proceed."
+
+DONE
+
+  - Added a cached UTF-8 and tab-aware word-wrap layout engine in
+    src/viewer.c (knox_viewer_ensure_wrapped, knox_viewer_wrap_range,
+    knox_viewer_toggle_wrap) with knox_wrap_row_t in include/knox.h.
+  - Enabled word wrap by default for diff views (KNOX_DOC_DIFF) in both
+    Unified Diff and Side-by-Side Diff modes, preserving diff colors
+    across continuation rows, aligning wrapped continuations cleanly
+    under the diff gutter, and keeping logical line numbers accurate in
+    the header, footer, search, and Alt+E editor jumps.
+  - Added the toggle-wrap widget (w / W, customizable via keymap.ini,
+    listed in Guidance and keys/keybindings.md) so word wrap can be
+    toggled on or off in any File or Diff Viewer pane.
+  - Added unit tests in tests/test-syntax-render.c, keymap validation
+    in tests/test-p3.c, and an end-to-end PTY test in tests/test-pty.c.
+  - make test and make sanitize passed.
+
+FAILED
+
+  Nothing.
+
+HANDOFF
+
+  - Version 1.1.6 is ready for Fred's trial.

@@ -452,6 +452,17 @@ typedef struct {
 } knox_sbs_row_t;
 
 typedef struct {
+    size_t logical_idx; /* Index into line_offsets[] or sbs_rows[] */
+    size_t sub_row;     /* 0 = first visual row of logical line, >0 = continuation */
+    size_t byte_off;    /* Segment byte offset in raw_text (unified/file/banner) */
+    size_t byte_len;    /* Segment byte length (unified/file/banner) */
+    size_t old_off;     /* Left-side segment byte offset in raw_text (SBS) */
+    size_t old_len;     /* Left-side segment byte length (SBS) */
+    size_t new_off;     /* Right-side segment byte offset in raw_text (SBS) */
+    size_t new_len;     /* Right-side segment byte length (SBS) */
+} knox_wrap_row_t;
+
+typedef struct {
     knox_doc_kind_t    kind;
     char              *title;         /* Tab title, e.g. "ROADMAP.md" */
     char              *repo_name;     /* Disambiguator, e.g. "tam" */
@@ -477,8 +488,14 @@ typedef struct {
     bool               side_by_side;
     knox_sbs_row_t    *sbs_rows;
     size_t             sbs_count;
+    /* Word-wrap visual row cache */
+    knox_wrap_row_t   *wrap_rows;
+    size_t             wrap_count;
+    int                wrap_width;
+    bool               wrap_sbs;
     /* Viewport state */
     size_t             top_line;
+    size_t             top_vrow;
     size_t             cursor_line;
     int                left_col;
     bool               wrap_lines;
@@ -497,6 +514,11 @@ int  knox_viewer_toggle_render(knox_viewer_doc_t *doc, int width, bool ascii);
 int  knox_viewer_ensure_rendered(knox_viewer_doc_t *doc, int width, bool ascii);
 int  knox_viewer_build_sbs(knox_viewer_doc_t *doc);
 int  knox_viewer_toggle_side_by_side(knox_viewer_doc_t *doc);
+int  knox_viewer_ensure_wrapped(knox_viewer_doc_t *doc, int width);
+bool knox_viewer_wrap_range(const knox_viewer_doc_t *doc,
+                            size_t logical_idx,
+                            size_t *out_first, size_t *out_last);
+int  knox_viewer_toggle_wrap(knox_viewer_doc_t *doc);
 bool knox_viewer_search(knox_viewer_doc_t *doc, const char *query,
                         bool forward, bool step);
 

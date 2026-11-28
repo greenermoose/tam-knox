@@ -121,11 +121,90 @@ static void test_side_by_side_diff_builder(void)
     knox_viewer_free(&doc);
 }
 
+static void test_viewer_word_wrap(void)
+{
+    const char *sample_diff =
+        "--- a/notes.html\n"
+        "+++ b/notes.html\n"
+        "@@ -1,2 +1,4 @@\n"
+        "-short old line\n"
+        "+<p>This path follows a piece of copied text from a keystroke to the program.</p>\n"
+        "+    supercalifragilisticexpialidocious\n"
+        "+\tindented\twith\ttabs and \xe2\x80\x94 emdash\n";
+
+    knox_viewer_doc_t doc = {0};
+    assert(knox_viewer_open_buffer(&doc, KNOX_DOC_DIFF, "Diff notes.html",
+                                   "demo", "demo > notes.html",
+                                   sample_diff, strlen(sample_diff),
+                                   KNOX_LANG_DIFF) == 0);
+    /* Diffs default to word wrap enabled */
+    assert(doc.wrap_lines == true);
+    assert(knox_viewer_ensure_wrapped(&doc, 26) == 0);
+    assert(doc.wrap_count > doc.line_count);
+
+    /* Line 4 (+<p>This path...) wraps at word boundaries */
+    size_t first = 0, last = 0;
+    assert(knox_viewer_wrap_range(&doc, 4, &first, &last));
+    assert(last > first);
+    /* First row starts with "+<p>This" and ends cleanly at a word boundary */
+    const knox_wrap_row_t *r0 = &doc.wrap_rows[first];
+    assert(r0->sub_row == 0);
+    assert(strncmp(doc.raw_text + r0->byte_off, "+<p>This ", 9) == 0);
+    /* Last row contains "program.</p>" */
+    const knox_wrap_row_t *rlast = &doc.wrap_rows[last];
+    assert(rlast->sub_row == last - first);
+    assert(memmem(doc.raw_text + rlast->byte_off, rlast->byte_len,
+                  "program.</p>", 12) != NULL);
+
+    /* Line 5 (+    supercalifragilistic...) must NOT leave an orphan "+    " row */
+    assert(knox_viewer_wrap_range(&doc, 5, &first, &last));
+    assert(last > first);
+    assert(doc.wrap_rows[first].byte_len > 5);
+    assert(strncmp(doc.raw_text + doc.wrap_rows[first].byte_off, "+    super", 10) == 0);
+
+    /* Line 6 (tabs + UTF-8 em-dash) wraps without losing the tail */
+    assert(knox_viewer_wrap_range(&doc, 6, &first, &last));
+    assert(last > first);
+    assert(memmem(doc.raw_text + doc.wrap_rows[last].byte_off,
+                  doc.wrap_rows[last].byte_len, "emdash", 6) != NULL);
+
+    /* Side-by-Side Diff wraps paired columns to max(left_segs, right_segs) */
+    assert(knox_viewer_toggle_side_by_side(&doc) == 0);
+    assert(knox_viewer_ensure_wrapped(&doc, 45) == 0);
+    /* SBS row 3 is the paired change (-short old line vs +<p>This path...) */
+    assert(knox_viewer_wrap_range(&doc, 3, &first, &last));
+    assert(last > first);
+    assert(doc.wrap_rows[first].old_len > 0);
+    assert(doc.wrap_rows[first].new_len > 0);
+    assert(doc.wrap_rows[last].old_len == 0);
+    assert(doc.wrap_rows[last].new_len > 0);
+    assert(memmem(doc.raw_text + doc.wrap_rows[last].new_off,
+                  doc.wrap_rows[last].new_len, "program.</p>", 12) != NULL);
+
+    /* Toggle wrap off and back on */
+    assert(knox_viewer_toggle_wrap(&doc) == 0);
+    assert(doc.wrap_lines == false);
+    assert(knox_viewer_toggle_wrap(&doc) == 0);
+    assert(doc.wrap_lines == true);
+
+    knox_viewer_free(&doc);
+
+    /* Raw files default to wrap_lines == false */
+    knox_viewer_doc_t fdoc = {0};
+    const char *src = "int main(void) { return 0; }\n";
+    assert(knox_viewer_open_buffer(&fdoc, KNOX_DOC_FILE, "main.c",
+                                   "demo", "demo > main.c",
+                                   src, strlen(src), KNOX_LANG_C) == 0);
+    assert(fdoc.wrap_lines == false);
+    knox_viewer_free(&fdoc);
+}
+
 int main(void)
 {
     test_syntax_detection_and_lexing();
     test_viewer_markdown_and_html_render();
     test_side_by_side_diff_builder();
+    test_viewer_word_wrap();
     printf("test-syntax-render: all tests passed\n");
     return 0;
 }

@@ -753,6 +753,97 @@ int main(int argc, char **argv)
     test_pty_explore_repo(bin);
     test_pty_tab_number_select(bin);
 
+    /* End-to-end check: Working Tree Diff word-wraps long lines in Unified
+     * and Side-by-Side modes, and 'w' toggles wrapping off and on. */
+    {
+        char wrap_tpl[] = "/tmp/knox-pty-wrap-XXXXXX";
+        char *wrap_ws = mkdtemp(wrap_tpl);
+        assert(wrap_ws != NULL);
+        char *wrepo = tam_path_join(wrap_ws, "r");
+        assert(tam_fs_mkdir_p(wrepo, 0755));
+        run_git((const char *[]){"git", "-C", wrepo, "init", "-b", "dev", NULL});
+        run_git((const char *[]){"git", "-C", wrepo, "config", "user.name", "Fred", NULL});
+        run_git((const char *[]){"git", "-C", wrepo, "config", "user.email", "fred@example.com", NULL});
+
+        char *wfile = tam_path_join(wrepo, "prose.html");
+        const char *v1 = "<p>Initial short line.</p>\n";
+        assert(tam_fs_write_atomic(wfile, v1, strlen(v1), 0, 0644) == 0);
+        run_git((const char *[]){"git", "-C", wrepo, "add", "--", "prose.html", NULL});
+        run_git((const char *[]){"git", "-C", wrepo, "commit", "-m", "init", NULL});
+
+        const char *v2 =
+            "<p>START_MARKER_ALPHA This path follows a piece of copied text from a keystroke to the program that holds it and then into the ring and ends with END_MARKER_OMEGA.</p>\n";
+        assert(tam_fs_write_atomic(wfile, v2, strlen(v2), 0, 0644) == 0);
+
+        int wmfd = posix_openpt(O_RDWR | O_NOCTTY);
+        assert(wmfd >= 0);
+        assert(grantpt(wmfd) == 0);
+        assert(unlockpt(wmfd) == 0);
+        char *wsname = ptsname(wmfd);
+        assert(wsname != NULL);
+
+        struct winsize wwsz = { .ws_row = 28, .ws_col = 140 };
+        pid_t wpid = fork();
+        assert(wpid >= 0);
+        if (wpid == 0) {
+            close(wmfd);
+            setsid();
+            int wsfd = open(wsname, O_RDWR);
+            if (wsfd < 0)
+                _exit(127);
+            ioctl(wsfd, TIOCSCTTY, 0);
+            ioctl(wsfd, TIOCSWINSZ, &wwsz);
+            dup2(wsfd, STDIN_FILENO);
+            dup2(wsfd, STDOUT_FILENO);
+            dup2(wsfd, STDERR_FILENO);
+            if (wsfd > 2)
+                close(wsfd);
+            setenv("TERM", "xterm-256color", 1);
+            unsetenv("TAM_KNOX_KEYMAP");
+            execl(bin, bin, wrap_ws, (char *)NULL);
+            _exit(127);
+        }
+
+        char wout[65536];
+        assert(wait_for_pty_text(wmfd, wout, sizeof(wout), "prose.html", 3000));
+
+        /* Tab -> Changes, Enter -> open Working Tree Diff (wrapped by default) */
+        assert(write(wmfd, "\t\r", 2) == 2);
+        assert(wait_for_pty_text(wmfd, wout, sizeof(wout), "Unified Diff [d/R]", 3000));
+        assert(strstr(wout, "Wrap [w]") != NULL);
+        assert(strstr(wout, "START_MARKER_ALPHA") != NULL);
+        assert(strstr(wout, "END_MARKER_OMEGA") != NULL);
+
+        /* 'w' disables wrap: tail is now clipped off the right edge */
+        assert(write(wmfd, "w", 1) == 1);
+        assert(wait_for_pty_text(wmfd, wout, sizeof(wout), "Word wrap disabled", 3000));
+        assert(strstr(wout, "START_MARKER_ALPHA") != NULL);
+        assert(strstr(wout, "END_MARKER_OMEGA") == NULL);
+
+        /* 'w' re-enables wrap: tail is visible again */
+        assert(write(wmfd, "w", 1) == 1);
+        assert(wait_for_pty_text(wmfd, wout, sizeof(wout), "Word wrap enabled", 3000));
+        assert(strstr(wout, "END_MARKER_OMEGA") != NULL);
+
+        /* 'd' switches to Side-by-Side Diff with wrap still active */
+        assert(write(wmfd, "d", 1) == 1);
+        assert(wait_for_pty_text(wmfd, wout, sizeof(wout), "Side-by-Side Diff [d/R]", 3000));
+        assert(strstr(wout, "Wrap [w]") != NULL);
+        assert(strstr(wout, "START_MARKER_ALPHA") != NULL);
+        assert(strstr(wout, "END_MARKER_OMEGA") != NULL);
+
+        assert(write(wmfd, "\x11", 1) == 1);
+        drain_pty(wmfd, wout, sizeof(wout), 200);
+        int wstatus = 0;
+        waitpid(wpid, &wstatus, 0);
+        close(wmfd);
+        assert(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+
+        free(wfile);
+        free(wrepo);
+        tam_fs_remove_tree(-100, wrap_ws);
+    }
+
     printf("test-pty: all interactive TUI checks passed\n");
     return 0;
 }

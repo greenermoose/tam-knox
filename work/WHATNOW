@@ -3,12 +3,17 @@ WHATNOW
 What tam-knox is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-27, with W14
+Updated: 2026-11-28, with W15
 
 STATE
 
+  Version 1.1.6 on branch dev word-wraps diff display panels by default
+  (both Unified Diff and Side-by-Side Diff) and adds w / W (toggle-wrap)
+  to toggle word wrap in File and Diff Viewer panes. Fred's trial is
+  pending.
+
   Version 1.1.5 on branch dev puts the active guidance sort column first
-  and separates shortcut aliases with spaces. Fred's trial is pending.
+  and separates shortcut aliases with spaces.
 
   Version 1.1.4 grouped guidance keys by modifier, then put letters,
   digits, and special keys in that order within each group.

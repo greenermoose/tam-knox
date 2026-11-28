@@ -129,6 +129,7 @@ void knox_viewer_free(knox_viewer_doc_t *doc)
     free(doc->rend_offsets);
     free(doc->rend_lengths);
     free(doc->sbs_rows);
+    free(doc->wrap_rows);
     *doc = (knox_viewer_doc_t){0};
 }
 
@@ -317,8 +318,319 @@ int knox_viewer_toggle_side_by_side(knox_viewer_doc_t *doc)
         doc->side_by_side = false;
     }
     doc->top_line = 0;
+    doc->top_vrow = 0;
     doc->cursor_line = 0;
     doc->left_col = 0;
+    doc->wrap_width = 0;
+    return 0;
+}
+
+typedef struct {
+    size_t off;
+    size_t len;
+} wrap_seg_t;
+
+static bool wrap_seg_push(wrap_seg_t **segs, size_t *count, size_t *cap,
+                          size_t off, size_t len)
+{
+    if (*count == *cap) {
+        size_t next = *cap ? (*cap * 2) : 16;
+        wrap_seg_t *grown = realloc(*segs, next * sizeof(*grown));
+        if (!grown)
+            return false;
+        *segs = grown;
+        *cap = next;
+    }
+    (*segs)[(*count)++] = (wrap_seg_t){ .off = off, .len = len };
+    return true;
+}
+
+static bool wrap_row_push(knox_wrap_row_t **rows, size_t *count, size_t *cap,
+                          knox_wrap_row_t row)
+{
+    if (*count == *cap) {
+        size_t next = *cap ? (*cap * 2) : 128;
+        knox_wrap_row_t *grown = realloc(*rows, next * sizeof(*grown));
+        if (!grown)
+            return false;
+        *rows = grown;
+        *cap = next;
+    }
+    (*rows)[(*count)++] = row;
+    return true;
+}
+
+/* Split text[base_off .. base_off + len) into word-wrapped visual segments.
+ * Accounts for UTF-8 display widths (tam_uni_width) and 4-column tab stops. */
+static bool wrap_slice_segments(const char *base, size_t base_off, size_t len,
+                                int first_w, int cont_w, bool diff_marker,
+                                wrap_seg_t **out_segs, size_t *out_count,
+                                size_t *out_cap)
+{
+    *out_count = 0;
+    if (len == 0)
+        return wrap_seg_push(out_segs, out_count, out_cap, base_off, 0);
+
+    size_t pos = 0;
+    size_t seg_idx = 0;
+    while (pos < len) {
+        int limit = (seg_idx == 0) ? first_w : cont_w;
+        if (limit < 1)
+            limit = 1;
+
+        size_t i = pos;
+        int vis = 0;
+        size_t last_break_end = pos;
+        size_t last_break_next = pos;
+        bool have_break = false;
+        bool saw_non_ws = false;
+        bool overflow = false;
+
+        while (i < len) {
+            uint32_t cp = 0;
+            size_t clen = tam_utf8_decode(base + base_off + i, len - i, &cp);
+            if (clen == 0)
+                clen = 1;
+
+            int cw = 0;
+            if (cp == '\t') {
+                cw = 4;
+            } else if (cp >= 0x20) {
+                cw = tam_uni_width(cp);
+                if (cw < 0)
+                    cw = 1;
+            }
+
+            if (vis + cw > limit) {
+                if (saw_non_ws && (cp == ' ' || cp == '\t') && vis > 0) {
+                    last_break_end = i;
+                    last_break_next = (cp == ' ') ? (i + clen) : i;
+                    have_break = true;
+                }
+                overflow = true;
+                break;
+            }
+
+            vis += cw;
+            i += clen;
+
+            bool is_ws = (cp == ' ' || cp == '\t');
+            bool is_lead_marker = (diff_marker && seg_idx == 0 && i == pos + 1 &&
+                                   (cp == '+' || cp == '-' || cp == ' '));
+            if (!is_ws && !is_lead_marker) {
+                saw_non_ws = true;
+            } else if (is_ws && saw_non_ws) {
+                last_break_end = i;
+                last_break_next = i;
+                have_break = true;
+            }
+        }
+
+        size_t seg_end = len;
+        size_t next_pos = len;
+        if (overflow) {
+            if (have_break && last_break_end > pos) {
+                seg_end = last_break_end;
+                next_pos = last_break_next;
+            } else if (i > pos) {
+                seg_end = i;
+                next_pos = i;
+            } else {
+                uint32_t cp = 0;
+                size_t clen = tam_utf8_decode(base + base_off + pos, len - pos, &cp);
+                if (clen == 0)
+                    clen = 1;
+                seg_end = pos + clen;
+                next_pos = pos + clen;
+            }
+        }
+
+        if (!wrap_seg_push(out_segs, out_count, out_cap,
+                           base_off + pos, seg_end - pos))
+            return false;
+        pos = next_pos;
+        seg_idx++;
+    }
+    return true;
+}
+
+int knox_viewer_ensure_wrapped(knox_viewer_doc_t *doc, int width)
+{
+    if (!doc || !doc->raw_text)
+        return -1;
+    if (width < 4)
+        width = 4;
+
+    bool is_sbs = (doc->kind == KNOX_DOC_DIFF && doc->side_by_side);
+    if (is_sbs && (!doc->sbs_rows || doc->sbs_count == 0)) {
+        if (knox_viewer_build_sbs(doc) != 0)
+            return -1;
+    }
+
+    if (doc->wrap_rows && doc->wrap_width == width && doc->wrap_sbs == is_sbs)
+        return 0;
+
+    free(doc->wrap_rows);
+    doc->wrap_rows = NULL;
+    doc->wrap_count = 0;
+
+    size_t row_cap = 0;
+    wrap_seg_t *lsegs = NULL;
+    size_t lcount = 0, lcap = 0;
+    wrap_seg_t *rsegs = NULL;
+    size_t rcount = 0, rcap = 0;
+
+    if (is_sbs) {
+        int left_w = (width - 1) / 2;
+        if (left_w < 10)
+            left_w = 10;
+        int right_w = width - 1 - left_w;
+        if (right_w < 10)
+            right_w = 10;
+        int l_text_w = (left_w > 5) ? (left_w - 5) : 1;
+        int r_text_w = (right_w > 5) ? (right_w - 5) : 1;
+        int banner_first_w = (width > 1) ? (width - 1) : 1;
+        int banner_cont_w = (width > 2) ? (width - 2) : 1;
+
+        for (size_t i = 0; i < doc->sbs_count; i++) {
+            const knox_sbs_row_t *sr = &doc->sbs_rows[i];
+            if (sr->kind == KNOX_SBS_HEADER || sr->kind == KNOX_SBS_HUNK) {
+                if (!wrap_slice_segments(doc->raw_text, sr->old_off, sr->old_len,
+                                         banner_first_w, banner_cont_w, false,
+                                         &lsegs, &lcount, &lcap))
+                    goto oom;
+                for (size_t s = 0; s < lcount; s++) {
+                    if (!wrap_row_push(&doc->wrap_rows, &doc->wrap_count, &row_cap,
+                                       (knox_wrap_row_t){
+                                           .logical_idx = i,
+                                           .sub_row = s,
+                                           .byte_off = lsegs[s].off,
+                                           .byte_len = lsegs[s].len,
+                                           .old_off = lsegs[s].off,
+                                           .old_len = lsegs[s].len
+                                       }))
+                        goto oom;
+                }
+                continue;
+            }
+
+            lcount = 0;
+            rcount = 0;
+            if (sr->old_lineno > 0) {
+                if (!wrap_slice_segments(doc->raw_text, sr->old_off, sr->old_len,
+                                         l_text_w, l_text_w, false,
+                                         &lsegs, &lcount, &lcap))
+                    goto oom;
+            }
+            if (sr->new_lineno > 0) {
+                if (!wrap_slice_segments(doc->raw_text, sr->new_off, sr->new_len,
+                                         r_text_w, r_text_w, false,
+                                         &rsegs, &rcount, &rcap))
+                    goto oom;
+            }
+            size_t nrows = lcount > rcount ? lcount : rcount;
+            if (nrows == 0)
+                nrows = 1;
+            for (size_t s = 0; s < nrows; s++) {
+                knox_wrap_row_t wr = {
+                    .logical_idx = i,
+                    .sub_row = s
+                };
+                if (s < lcount) {
+                    wr.old_off = lsegs[s].off;
+                    wr.old_len = lsegs[s].len;
+                }
+                if (s < rcount) {
+                    wr.new_off = rsegs[s].off;
+                    wr.new_len = rsegs[s].len;
+                }
+                if (!wrap_row_push(&doc->wrap_rows, &doc->wrap_count, &row_cap, wr))
+                    goto oom;
+            }
+        }
+    } else {
+        int first_w = (doc->kind == KNOX_DOC_FILE)
+                      ? ((width > 5) ? (width - 5) : 1)
+                      : ((width > 1) ? (width - 1) : 1);
+        int cont_w = (doc->kind == KNOX_DOC_FILE)
+                     ? first_w
+                     : ((width > 2) ? (width - 2) : 1);
+        bool diff_marker = (doc->kind == KNOX_DOC_DIFF);
+
+        for (size_t i = 0; i < doc->line_count; i++) {
+            if (!wrap_slice_segments(doc->raw_text, doc->line_offsets[i],
+                                     doc->line_lengths[i],
+                                     first_w, cont_w, diff_marker,
+                                     &lsegs, &lcount, &lcap))
+                goto oom;
+            for (size_t s = 0; s < lcount; s++) {
+                if (!wrap_row_push(&doc->wrap_rows, &doc->wrap_count, &row_cap,
+                                   (knox_wrap_row_t){
+                                       .logical_idx = i,
+                                       .sub_row = s,
+                                       .byte_off = lsegs[s].off,
+                                       .byte_len = lsegs[s].len
+                                   }))
+                    goto oom;
+            }
+        }
+    }
+
+    free(lsegs);
+    free(rsegs);
+    doc->wrap_width = width;
+    doc->wrap_sbs = is_sbs;
+    return 0;
+
+oom:
+    free(lsegs);
+    free(rsegs);
+    free(doc->wrap_rows);
+    doc->wrap_rows = NULL;
+    doc->wrap_count = 0;
+    doc->wrap_width = 0;
+    return -1;
+}
+
+bool knox_viewer_wrap_range(const knox_viewer_doc_t *doc,
+                            size_t logical_idx,
+                            size_t *out_first, size_t *out_last)
+{
+    if (!doc || !doc->wrap_rows || doc->wrap_count == 0)
+        return false;
+
+    size_t lo = 0;
+    size_t hi = doc->wrap_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (doc->wrap_rows[mid].logical_idx < logical_idx)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo >= doc->wrap_count || doc->wrap_rows[lo].logical_idx != logical_idx)
+        return false;
+
+    size_t last = lo;
+    while (last + 1 < doc->wrap_count &&
+           doc->wrap_rows[last + 1].logical_idx == logical_idx)
+        last++;
+
+    if (out_first)
+        *out_first = lo;
+    if (out_last)
+        *out_last = last;
+    return true;
+}
+
+int knox_viewer_toggle_wrap(knox_viewer_doc_t *doc)
+{
+    if (!doc)
+        return -1;
+    doc->wrap_lines = !doc->wrap_lines;
+    doc->left_col = 0;
+    doc->top_vrow = 0;
+    doc->wrap_width = 0;
     return 0;
 }
 
@@ -391,6 +703,7 @@ int knox_viewer_open_buffer(knox_viewer_doc_t *doc, knox_doc_kind_t kind,
     doc->lang = lang;
     doc->markup_fmt = TAM_RENDER_FORMAT_RAW;
     doc->render_mode = false;
+    doc->wrap_lines = (kind == KNOX_DOC_DIFF);
     doc->focused_link = -1;
     compute_lexer_states(doc);
     return 0;
@@ -459,8 +772,10 @@ int knox_viewer_toggle_render(knox_viewer_doc_t *doc, int width, bool ascii)
         doc->render_mode = false;
     }
     doc->top_line = 0;
+    doc->top_vrow = 0;
     doc->cursor_line = 0;
     doc->left_col = 0;
+    doc->wrap_width = 0;
     return 0;
 }
 

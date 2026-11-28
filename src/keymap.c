@@ -24,6 +24,7 @@ static const char *const VALID_WIDGETS[] = {
     "branch-modal",
     "stash-modal",
     "toggle-diff-split",
+    "toggle-wrap",
     "open-in-editor",
     "toggle-render-mode",
     "cycle-branch-filter",

@@ -73,6 +73,7 @@ static const knox_widget_cmd_t WIDGET_TABLE[] = {
     { "branch-modal",        "c / C / Alt+K", "Checkout or create a branch in active repository" },
     { "stash-modal",         "z / Z / Alt+Z", "Manage stashes (list, push, inspect diff, apply, pop, drop)" },
     { "toggle-diff-split",   "d / D / Alt+D", "Toggle Side-by-Side Split Diff vs. Unified Diff mode" },
+    { "toggle-wrap",         "w / W",         "Toggle word wrap in File and Diff Viewer" },
     { "open-in-editor",      "Alt+E",         "Open current file at current line in tam-edit" },
     { "toggle-render-mode",  "r / R / Alt+R", "Toggle Rendered (MD/HTML/Mermaid) vs. Raw Syntax view" },
     { "cycle-branch-filter", "B / Alt+F",     "Toggle Git Graph between All Branches and HEAD" },
@@ -1384,9 +1385,19 @@ static unsigned char lookup_rendered_style(const struct tam_render_styles *st,
     return TAM_RENDER_STYLE_NONE;
 }
 
+static void append_expanded_tabs(tam_str_t *dst, const char *src, size_t len)
+{
+    for (size_t b = 0; b < len; b++) {
+        if (src[b] == '\t')
+            *dst = tam_str_cat(*dst, "    ");
+        else
+            *dst = tam_str_cat_len(*dst, src + b, 1);
+    }
+}
+
 static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
                                    tam_str_t *frame, bool is_focused,
-                                   int body_h)
+                                   int body_h, bool wrapped)
 {
     knox_viewer_doc_t *doc = &p->doc;
     knox_viewer_build_sbs(doc);
@@ -1414,10 +1425,13 @@ static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
                                ? (app->opts.linux_vt ? "\033[1;33m" : "\033[1;38;5;228m")
                                : "";
 
+    size_t row_limit = wrapped ? doc->wrap_count : doc->sbs_count;
+    size_t start_row = wrapped ? doc->top_vrow : doc->top_line;
+
     for (int r = 0; r < body_h; r++) {
-        size_t idx = doc->top_line + (size_t)r;
+        size_t ridx = start_row + (size_t)r;
         int row_y = p->y + 1 + r;
-        if (idx >= doc->sbs_count) {
+        if (ridx >= row_limit) {
             frame_move_write(frame, row_y, p->x, "~", left_w,
                              app->opts.color ? "\033[90m" : "", true);
             frame_move_write(frame, row_y, sep_x, bx->v, 1,
@@ -1427,14 +1441,19 @@ static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
             continue;
         }
 
+        const knox_wrap_row_t *wr = wrapped ? &doc->wrap_rows[ridx] : NULL;
+        size_t idx = wr ? wr->logical_idx : ridx;
+        size_t sub_row = wr ? wr->sub_row : 0;
         const knox_sbs_row_t *sr = &doc->sbs_rows[idx];
         bool is_cursor = (idx == doc->cursor_line);
         const char *cursor_sgr = is_cursor ? sgr_row_selected(app, is_focused) : NULL;
 
         if (sr->kind == KNOX_SBS_HEADER || sr->kind == KNOX_SBS_HUNK) {
-            tam_str_t banner = tam_str_new(" ");
-            if (doc->raw_text && sr->old_len > 0)
-                banner = tam_str_cat_len(banner, doc->raw_text + sr->old_off, sr->old_len);
+            tam_str_t banner = tam_str_new(sub_row == 0 ? " " : "  ");
+            size_t boff = wr ? wr->byte_off : sr->old_off;
+            size_t blen = wr ? wr->byte_len : sr->old_len;
+            if (doc->raw_text && blen > 0)
+                banner = tam_str_cat_len(banner, doc->raw_text + boff, blen);
             const char *bg = cursor_sgr ? cursor_sgr :
                              (sr->kind == KNOX_SBS_HUNK ? hunk_sgr : hdr_line_sgr);
             frame_move_write(frame, row_y, p->x, banner, p->w, bg, true);
@@ -1445,22 +1464,24 @@ static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
         /* Left cell (Old) */
         tam_str_t lstr = tam_str_new("");
         if (sr->old_lineno > 0) {
-            char mark = sr->old_changed ? '-' : ' ';
-            if (app->opts.color && !is_cursor && !sr->old_changed)
-                lstr = tam_str_cat_printf(lstr, "%s%4d\033[0m%c", sgr_muted(app), sr->old_lineno, mark);
-            else
-                lstr = tam_str_cat_printf(lstr, "%4d%c", sr->old_lineno, mark);
+            if (sub_row == 0) {
+                char mark = sr->old_changed ? '-' : ' ';
+                if (app->opts.color && !is_cursor && !sr->old_changed)
+                    lstr = tam_str_cat_printf(lstr, "%s%4d\033[0m%c", sgr_muted(app), sr->old_lineno, mark);
+                else
+                    lstr = tam_str_cat_printf(lstr, "%4d%c", sr->old_lineno, mark);
+            } else {
+                lstr = tam_str_cat(lstr, "     ");
+            }
 
-            size_t skip = (size_t)doc->left_col;
-            if (doc->raw_text && skip < sr->old_len) {
-                const char *src = doc->raw_text + sr->old_off + skip;
-                size_t slen = sr->old_len - skip;
-                for (size_t b = 0; b < slen; b++) {
-                    if (src[b] == '\t')
-                        lstr = tam_str_cat(lstr, "    ");
-                    else
-                        lstr = tam_str_cat_len(lstr, src + b, 1);
-                }
+            if (wr) {
+                if (doc->raw_text && wr->old_len > 0)
+                    append_expanded_tabs(&lstr, doc->raw_text + wr->old_off, wr->old_len);
+            } else {
+                size_t skip = (size_t)doc->left_col;
+                if (doc->raw_text && skip < sr->old_len)
+                    append_expanded_tabs(&lstr, doc->raw_text + sr->old_off + skip,
+                                         sr->old_len - skip);
             }
         } else {
             lstr = tam_str_cat(lstr, "     ");
@@ -1478,22 +1499,24 @@ static void render_viewer_sbs_diff(knox_app_t *app, knox_pane_t *p,
         /* Right cell (New) */
         tam_str_t rstr = tam_str_new("");
         if (sr->new_lineno > 0) {
-            char mark = sr->new_changed ? '+' : ' ';
-            if (app->opts.color && !is_cursor && !sr->new_changed)
-                rstr = tam_str_cat_printf(rstr, "%s%4d\033[0m%c", sgr_muted(app), sr->new_lineno, mark);
-            else
-                rstr = tam_str_cat_printf(rstr, "%4d%c", sr->new_lineno, mark);
+            if (sub_row == 0) {
+                char mark = sr->new_changed ? '+' : ' ';
+                if (app->opts.color && !is_cursor && !sr->new_changed)
+                    rstr = tam_str_cat_printf(rstr, "%s%4d\033[0m%c", sgr_muted(app), sr->new_lineno, mark);
+                else
+                    rstr = tam_str_cat_printf(rstr, "%4d%c", sr->new_lineno, mark);
+            } else {
+                rstr = tam_str_cat(rstr, "     ");
+            }
 
-            size_t skip = (size_t)doc->left_col;
-            if (doc->raw_text && skip < sr->new_len) {
-                const char *src = doc->raw_text + sr->new_off + skip;
-                size_t slen = sr->new_len - skip;
-                for (size_t b = 0; b < slen; b++) {
-                    if (src[b] == '\t')
-                        rstr = tam_str_cat(rstr, "    ");
-                    else
-                        rstr = tam_str_cat_len(rstr, src + b, 1);
-                }
+            if (wr) {
+                if (doc->raw_text && wr->new_len > 0)
+                    append_expanded_tabs(&rstr, doc->raw_text + wr->new_off, wr->new_len);
+            } else {
+                size_t skip = (size_t)doc->left_col;
+                if (doc->raw_text && skip < sr->new_len)
+                    append_expanded_tabs(&rstr, doc->raw_text + sr->new_off + skip,
+                                         sr->new_len - skip);
             }
         } else {
             rstr = tam_str_cat(rstr, "     ");
@@ -1514,6 +1537,10 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
     if (doc->kind == KNOX_DOC_DIFF && doc->side_by_side)
         knox_viewer_build_sbs(doc);
 
+    bool wrapped = (doc->wrap_lines && !doc->render_mode);
+    if (wrapped && knox_viewer_ensure_wrapped(doc, p->w) != 0)
+        wrapped = false;
+
     size_t total_lines = (doc->kind == KNOX_DOC_DIFF && doc->side_by_side)
                          ? doc->sbs_count
                          : (doc->render_mode ? doc->rend_line_count : doc->line_count);
@@ -1523,12 +1550,14 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
     const char *mode_label = (doc->kind == KNOX_DOC_DIFF)
                              ? (doc->side_by_side ? "Side-by-Side Diff [d/R]" : "Unified Diff [d/R]")
                              : (doc->render_mode ? "Rendered [R]" : "Raw Syntax [R]");
+    const char *wrap_label = wrapped ? " | Wrap [w]" : "";
     snprintf(hdr, sizeof(hdr),
-             " %s%s | Mode: %s | Lang: %s | Line %zu/%zu [Alt+E Edit]",
+             " %s%s | Mode: %s | Lang: %s%s | Line %zu/%zu [Alt+E Edit]",
              p->file_stale ? "[Stale] " : "",
              doc->breadcrumb ? doc->breadcrumb : (doc->title ? doc->title : "File"),
              mode_label,
              knox_syntax_lang_name(doc->lang),
+             wrap_label,
              total_lines ? doc->cursor_line + 1 : 0,
              total_lines);
     const char *hdr_sgr = is_focused
@@ -1542,27 +1571,56 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
 
     if (doc->cursor_line >= total_lines && total_lines > 0)
         doc->cursor_line = total_lines - 1;
-    if (doc->cursor_line < doc->top_line)
-        doc->top_line = doc->cursor_line;
-    if (doc->cursor_line >= doc->top_line + (size_t)body_h)
-        doc->top_line = doc->cursor_line - (size_t)body_h + 1;
+
+    if (wrapped && doc->wrap_count > 0) {
+        size_t first_v = 0, last_v = 0;
+        if (knox_viewer_wrap_range(doc, doc->cursor_line, &first_v, &last_v)) {
+            size_t span = last_v - first_v + 1;
+            if (span <= (size_t)body_h) {
+                if (first_v < doc->top_vrow)
+                    doc->top_vrow = first_v;
+                if (last_v >= doc->top_vrow + (size_t)body_h)
+                    doc->top_vrow = last_v - (size_t)body_h + 1;
+            } else {
+                if (doc->top_vrow < first_v || doc->top_vrow > last_v)
+                    doc->top_vrow = first_v;
+            }
+        }
+        if (doc->wrap_count > (size_t)body_h) {
+            size_t max_top = doc->wrap_count - (size_t)body_h;
+            if (doc->top_vrow > max_top)
+                doc->top_vrow = max_top;
+        } else {
+            doc->top_vrow = 0;
+        }
+    } else {
+        if (doc->cursor_line < doc->top_line)
+            doc->top_line = doc->cursor_line;
+        if (doc->cursor_line >= doc->top_line + (size_t)body_h)
+            doc->top_line = doc->cursor_line - (size_t)body_h + 1;
+    }
 
     if (doc->kind == KNOX_DOC_DIFF && doc->side_by_side) {
-        render_viewer_sbs_diff(app, p, frame, is_focused, body_h);
+        render_viewer_sbs_diff(app, p, frame, is_focused, body_h, wrapped);
         return;
     }
 
     uint8_t tok_buf[4096];
+    size_t row_limit = wrapped ? doc->wrap_count : total_lines;
+    size_t start_row = wrapped ? doc->top_vrow : doc->top_line;
 
     for (int r = 0; r < body_h; r++) {
-        size_t idx = doc->top_line + (size_t)r;
+        size_t ridx = start_row + (size_t)r;
         int row_y = p->y + 1 + r;
-        if (idx >= total_lines) {
+        if (ridx >= row_limit) {
             frame_move_write(frame, row_y, p->x, "~", p->w,
                              app->opts.color ? "\033[90m" : "", true);
             continue;
         }
 
+        const knox_wrap_row_t *wr = wrapped ? &doc->wrap_rows[ridx] : NULL;
+        size_t idx = wr ? wr->logical_idx : ridx;
+        size_t sub_row = wr ? wr->sub_row : 0;
         bool is_cursor = (idx == doc->cursor_line);
         tam_str_t row_str = tam_str_new("");
 
@@ -1591,56 +1649,82 @@ static void render_viewer_pane(knox_app_t *app, knox_pane_t *p,
                 row_str = tam_str_cat_len(row_str, base + off, len);
             }
         } else {
-            /* Raw syntax-highlighted row with line numbers */
+            /* Raw syntax-highlighted row with line numbers or diff margin */
             if (doc->kind == KNOX_DOC_FILE) {
-                if (app->opts.color && !is_cursor)
+                if (sub_row > 0)
+                    row_str = tam_str_cat(row_str, "     ");
+                else if (app->opts.color && !is_cursor)
                     row_str = tam_str_cat_printf(row_str, "%s%4zu \033[0m", sgr_muted(app), idx + 1);
                 else
                     row_str = tam_str_cat_printf(row_str, "%4zu ", idx + 1);
             } else {
-                row_str = tam_str_cat(row_str, " ");
+                row_str = tam_str_cat(row_str, sub_row == 0 ? " " : "  ");
             }
 
-            const char *line = doc->raw_text + doc->line_offsets[idx];
-            size_t len = doc->line_lengths[idx];
-            size_t skip = (size_t)doc->left_col;
-            if (skip < len) {
-                const char *vis_line = line + skip;
-                size_t vis_len = len - skip;
-                if (vis_len > sizeof(tok_buf))
-                    vis_len = sizeof(tok_buf);
+            const char *full_line = doc->raw_text + doc->line_offsets[idx];
+            size_t full_len = doc->line_lengths[idx];
+            const char *vis_line = NULL;
+            size_t vis_len = 0;
+            size_t rel_off = 0;
 
-                knox_lex_state_t in_st = doc->line_states
-                                         ? (knox_lex_state_t)doc->line_states[idx]
-                                         : KNOX_LEX_NORMAL;
-                knox_syntax_highlight_line(doc->lang, in_st,
-                                           vis_line, vis_len, tok_buf);
+            if (wr) {
+                vis_line = doc->raw_text + wr->byte_off;
+                vis_len = wr->byte_len;
+                rel_off = (wr->byte_off >= doc->line_offsets[idx])
+                          ? (wr->byte_off - doc->line_offsets[idx]) : 0;
+            } else {
+                size_t skip = (size_t)doc->left_col;
+                if (skip < full_len) {
+                    vis_line = full_line + skip;
+                    vis_len = full_len - skip;
+                    rel_off = skip;
+                }
+            }
 
+            if (vis_line && vis_len > 0) {
                 if (app->opts.color && !is_cursor) {
-                    uint8_t cur_tok = KNOX_TOK_NORMAL;
-                    for (size_t b = 0; b < vis_len; b++) {
-                        uint8_t tk = tok_buf[b];
-                        if (tk != cur_tok) {
+                    if (doc->lang == KNOX_LANG_DIFF) {
+                        uint8_t dtok[16] = {0};
+                        size_t dlen = full_len < sizeof(dtok) ? full_len : sizeof(dtok);
+                        if (dlen > 0)
+                            knox_syntax_highlight_line(KNOX_LANG_DIFF, KNOX_LEX_NORMAL,
+                                                       full_line, dlen, dtok);
+                        const char *dsgr = knox_syntax_token_sgr(
+                            (knox_token_kind_t)dtok[0], app->opts.linux_vt);
+                        if (dsgr && *dsgr)
+                            row_str = tam_str_cat(row_str, dsgr);
+                        append_expanded_tabs(&row_str, vis_line, vis_len);
+                        if (dsgr && *dsgr)
                             row_str = tam_str_cat(row_str, "\033[0m");
-                            row_str = tam_str_cat(row_str,
-                                knox_syntax_token_sgr((knox_token_kind_t)tk,
-                                                      app->opts.linux_vt));
-                            cur_tok = tk;
+                    } else {
+                        size_t lex_len = full_len < sizeof(tok_buf) ? full_len : sizeof(tok_buf);
+                        knox_lex_state_t in_st = doc->line_states
+                                                 ? (knox_lex_state_t)doc->line_states[idx]
+                                                 : KNOX_LEX_NORMAL;
+                        knox_syntax_highlight_line(doc->lang, in_st,
+                                                   full_line, lex_len, tok_buf);
+
+                        uint8_t cur_tok = KNOX_TOK_NORMAL;
+                        for (size_t b = 0; b < vis_len; b++) {
+                            size_t tb = rel_off + b;
+                            uint8_t tk = (tb < lex_len) ? tok_buf[tb] : KNOX_TOK_NORMAL;
+                            if (tk != cur_tok) {
+                                row_str = tam_str_cat(row_str, "\033[0m");
+                                row_str = tam_str_cat(row_str,
+                                    knox_syntax_token_sgr((knox_token_kind_t)tk,
+                                                          app->opts.linux_vt));
+                                cur_tok = tk;
+                            }
+                            if (vis_line[b] == '\t')
+                                row_str = tam_str_cat(row_str, "    ");
+                            else
+                                row_str = tam_str_cat_len(row_str, vis_line + b, 1);
                         }
-                        if (vis_line[b] == '\t')
-                            row_str = tam_str_cat(row_str, "    ");
-                        else
-                            row_str = tam_str_cat_len(row_str, vis_line + b, 1);
+                        if (cur_tok != KNOX_TOK_NORMAL)
+                            row_str = tam_str_cat(row_str, "\033[0m");
                     }
-                    if (cur_tok != KNOX_TOK_NORMAL)
-                        row_str = tam_str_cat(row_str, "\033[0m");
                 } else {
-                    for (size_t b = 0; b < vis_len; b++) {
-                        if (vis_line[b] == '\t')
-                            row_str = tam_str_cat(row_str, "    ");
-                        else
-                            row_str = tam_str_cat_len(row_str, vis_line + b, 1);
-                    }
+                    append_expanded_tabs(&row_str, vis_line, vis_len);
                 }
             }
         }
@@ -2183,9 +2267,19 @@ static void render_footer(knox_app_t *app, tam_str_t *frame,
                 : (ap->doc.render_mode ? ap->doc.rend_line_count : ap->doc.line_count);
         if (total == 0) total = 1;
         attn = ap->doc.cursor_line + 1;
-        top = ap->doc.top_line + 1;
-        bot = top + (size_t)(ap->h > 1 ? ap->h - 1 : 1) - 1;
-        if (bot > total) bot = total;
+        if (ap->doc.wrap_lines && !ap->doc.render_mode &&
+            ap->doc.wrap_rows && ap->doc.wrap_count > 0) {
+            size_t vtop = ap->doc.top_vrow < ap->doc.wrap_count ? ap->doc.top_vrow : 0;
+            size_t vbot = vtop + (size_t)(ap->h > 1 ? ap->h - 1 : 1) - 1;
+            if (vbot >= ap->doc.wrap_count)
+                vbot = ap->doc.wrap_count - 1;
+            top = ap->doc.wrap_rows[vtop].logical_idx + 1;
+            bot = ap->doc.wrap_rows[vbot].logical_idx + 1;
+        } else {
+            top = ap->doc.top_line + 1;
+            bot = top + (size_t)(ap->h > 1 ? ap->h - 1 : 1) - 1;
+            if (bot > total) bot = total;
+        }
     }
 
     tam_pager_footer_t pf = {
@@ -2329,6 +2423,23 @@ static void app_move_selection(knox_app_t *app, int delta)
                            : (ap->doc.render_mode ? ap->doc.rend_line_count : ap->doc.line_count);
             if (total == 0)
                 return;
+            if (ap->doc.wrap_lines && !ap->doc.render_mode &&
+                ap->doc.wrap_rows && ap->doc.wrap_count > 0 &&
+                (delta == 1 || delta == -1)) {
+                size_t first_v = 0, last_v = 0;
+                int body_h = ap->h > 1 ? ap->h - 1 : 1;
+                if (knox_viewer_wrap_range(&ap->doc, ap->doc.cursor_line,
+                                           &first_v, &last_v)) {
+                    if (delta == 1 && last_v >= ap->doc.top_vrow + (size_t)body_h) {
+                        ap->doc.top_vrow++;
+                        return;
+                    }
+                    if (delta == -1 && first_v < ap->doc.top_vrow) {
+                        ap->doc.top_vrow--;
+                        return;
+                    }
+                }
+            }
             ssize_t next = (ssize_t)ap->doc.cursor_line + delta;
             if (next < 0) next = 0;
             if ((size_t)next >= total) next = (ssize_t)total - 1;
@@ -2541,6 +2652,7 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
                                   t->active_pane->doc.repo_name,
                                   t->active_pane->doc.render_mode,
                                   t->active_pane->w / 2, app->opts.ascii);
+            np->doc.wrap_lines = t->active_pane->doc.wrap_lines;
         } else if (np->content == KNOX_PANE_VIEWER && t->active_pane->doc.raw_text) {
             knox_viewer_open_buffer(&np->doc, t->active_pane->doc.kind,
                                     t->active_pane->doc.title,
@@ -2549,6 +2661,7 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
                                     t->active_pane->doc.raw_text,
                                     t->active_pane->doc.raw_len,
                                     t->active_pane->doc.lang);
+            np->doc.wrap_lines = t->active_pane->doc.wrap_lines;
         }
         knox_node_type_t st = (strcmp(widget, "split-vertical") == 0)
                               ? KNOX_NODE_SPLIT_V : KNOX_NODE_SPLIT_H;
@@ -2639,6 +2752,19 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
         } else {
             app_set_status(app, "Open a file diff first (Enter on a changed file) to toggle Side-by-Side Diff");
         }
+    } else if (strcmp(widget, "toggle-wrap") == 0) {
+        knox_pane_t *ap = app_active_pane(app);
+        if (ap && ap->content == KNOX_PANE_VIEWER) {
+            if (ap->doc.render_mode) {
+                app_set_status(app, "Rendered mode already wraps to pane width");
+            } else {
+                knox_viewer_toggle_wrap(&ap->doc);
+                app_set_status(app, "Word wrap %s",
+                               ap->doc.wrap_lines ? "enabled" : "disabled");
+            }
+        } else {
+            app_set_status(app, "Focus a File or Diff Viewer pane to toggle word wrap");
+        }
     } else if (strcmp(widget, "branch-modal") == 0) {
         if (app->active_repo_idx >= app->ws.count)
             return;
@@ -2724,13 +2850,15 @@ static void app_execute_widget(knox_app_t *app, const char *widget)
     } else if (strcmp(widget, "scroll-left") == 0) {
         if (app->focus == FOCUS_MAIN_PANE) {
             knox_pane_t *ap = app_active_pane(app);
-            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+            if (ap && ap->content == KNOX_PANE_VIEWER &&
+                !ap->doc.render_mode && !ap->doc.wrap_lines)
                 ap->doc.left_col = (ap->doc.left_col >= 4) ? ap->doc.left_col - 4 : 0;
         }
     } else if (strcmp(widget, "scroll-right") == 0) {
         if (app->focus == FOCUS_MAIN_PANE) {
             knox_pane_t *ap = app_active_pane(app);
-            if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+            if (ap && ap->content == KNOX_PANE_VIEWER &&
+                !ap->doc.render_mode && !ap->doc.wrap_lines)
                 ap->doc.left_col += 4;
         }
     } else if (strcmp(widget, "clear-screen") == 0) {
@@ -3386,7 +3514,8 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
                 app->focus = FOCUS_SIDEBAR_EXPLORER;
             } else {
                 knox_pane_t *ap = app_active_pane(app);
-                if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode) {
+                if (ap && ap->content == KNOX_PANE_VIEWER &&
+                    !ap->doc.render_mode && !ap->doc.wrap_lines) {
                     if (ap->doc.left_col >= 4)
                         ap->doc.left_col -= 4;
                     else
@@ -3412,7 +3541,8 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         } else if (app->focus == FOCUS_MAIN_PANE) {
             if (!(app->sidebar_visible && app->sidebar_mode == SIDEBAR_EXPLORER)) {
                 knox_pane_t *ap = app_active_pane(app);
-                if (ap && ap->content == KNOX_PANE_VIEWER && !ap->doc.render_mode)
+                if (ap && ap->content == KNOX_PANE_VIEWER &&
+                    !ap->doc.render_mode && !ap->doc.wrap_lines)
                     ap->doc.left_col += 4;
             }
         }
@@ -3472,6 +3602,10 @@ static void handle_key_event(knox_app_t *app, const tam_key_event_t *ev)
         case 'd':
         case 'D':
             app_execute_widget(app, "toggle-diff-split");
+            return;
+        case 'w':
+        case 'W':
+            app_execute_widget(app, "toggle-wrap");
             return;
         case 'c':
         case 'C':
